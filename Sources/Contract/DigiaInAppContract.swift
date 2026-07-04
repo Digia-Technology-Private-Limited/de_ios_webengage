@@ -4,6 +4,12 @@ import Foundation
 
 /// Merges a Digia rendering contract extracted from `raw` into a copy of `raw`,
 /// or returns `raw` unchanged when no contract is found.
+///
+/// Contract sources are tried in priority order:
+/// 1. Top-level keys — `campaignKey` or one of its aliases present directly in `raw`.
+/// 2. `<template id="digia-config">` HTML block with `<meta name="..." content="...">` children
+///    (the convention shared by the RN and Flutter WebEngage plugins).
+/// 3. `<digia ...>` HTML tag embedded in any string value (legacy scheme).
 internal func normalizeWithDigiaContract(_ raw: [String: Any]) -> [String: Any] {
     guard let contract = contractExtractor.extract(raw) else { return raw }
     return raw.merging(contract) { _, new in new }
@@ -11,6 +17,7 @@ internal func normalizeWithDigiaContract(_ raw: [String: Any]) -> [String: Any] 
 
 private let contractExtractor = DigiaContractExtractor(sources: [
     TopLevelContractSource(),
+    TemplateMetaContractSource(),
     HtmlDigiaTagContractSource(),
 ])
 
@@ -40,6 +47,52 @@ internal final class TopLevelContractSource: ContractSource {
     }
 }
 
+// MARK: - <template id="digia-config"> HTML block source
+
+internal final class TemplateMetaContractSource: ContractSource {
+    private static let templateRegex = try! NSRegularExpression(
+        pattern: #"<template\b[^>]*\bid\s*=\s*["']digia-config["'][^>]*>([\s\S]*?)</template>"#,
+        options: [.caseInsensitive]
+    )
+    private static let metaRegex = try! NSRegularExpression(
+        pattern: #"<meta\b[^>]*\bname\s*=\s*["']([^"']+)["'][^>]*\bcontent\s*=\s*["']([^"']*)["'][^>]*>"#,
+        options: [.caseInsensitive]
+    )
+
+    func extract(_ raw: [String: Any]) -> [String: Any]? {
+        for text in collectTemplateTextCandidates(raw) {
+            let nsText = text as NSString
+            let templateMatches = Self.templateRegex.matches(in: text, range: NSRange(location: 0, length: nsText.length))
+            for templateMatch in templateMatches {
+                guard templateMatch.numberOfRanges > 1 else { continue }
+                let body = nsText.substring(with: templateMatch.range(at: 1))
+                let nsBody = body as NSString
+                var campaignKey: String?
+                var args: [String: Any] = [:]
+                let metaMatches = Self.metaRegex.matches(in: body, range: NSRange(location: 0, length: nsBody.length))
+                for metaMatch in metaMatches {
+                    guard metaMatch.numberOfRanges > 2 else { continue }
+                    let name = nsBody.substring(with: metaMatch.range(at: 1)).trimmingCharacters(in: .whitespaces)
+                    let content = nsBody.substring(with: metaMatch.range(at: 2)).trimmingCharacters(in: .whitespaces)
+                    if content.isEmpty { continue }
+                    if isCampaignKeyAlias(name) {
+                        if campaignKey == nil { campaignKey = content }
+                    } else if !name.isEmpty {
+                        args[name] = content
+                    }
+                }
+                guard let key = campaignKey else { continue }
+                return [
+                    "campaignKey": key,
+                    "args": args,
+                    "digiaContractSource": "template_meta",
+                ]
+            }
+        }
+        return nil
+    }
+}
+
 // MARK: - HTML <digia …> tag source
 
 internal final class HtmlDigiaTagContractSource: ContractSource {
@@ -57,41 +110,54 @@ internal final class HtmlDigiaTagContractSource: ContractSource {
 
 // MARK: - Contract builder
 
+/// Top-level key names that carry a `campaignKey` value — mirrors the RN and Flutter
+/// WebEngage plugins' `CAMPAIGN_KEY_NAMES` list so all platforms recognize the same
+/// dashboard-authored campaign data.
+private let campaignKeyAliases: [String] = [
+    "campaignKey", "campaign_key", "campaign-key",
+    "digiaKey", "digia_key", "digia-key",
+    "digiaCampaign", "digia_campaign", "digia-campaign",
+    "digiaCampaignKey", "digia_campaign_key", "digia-campaign-key",
+]
+
+private let normalizedCampaignKeyAliases: Set<String> = Set(campaignKeyAliases.map(normalizeAliasName))
+
+private func normalizeAliasName(_ name: String) -> String {
+    return name.lowercased().replacingOccurrences(of: "-", with: "").replacingOccurrences(of: "_", with: "")
+}
+
+private func isCampaignKeyAlias(_ name: String) -> Bool {
+    return normalizedCampaignKeyAliases.contains(normalizeAliasName(name))
+}
+
+/// Validates and normalizes a raw attribute / key map into a Digia contract.
+///
+/// Returns `nil` when the data doesn't form a complete valid contract: requires a non-blank
+/// `campaignKey` (or one of its aliases in `campaignKeyAliases`) — the coupling key that links
+/// the CEP campaign to a Digia dashboard campaign config.
 private func buildContract(_ raw: [String: Any], source: String) -> [String: Any]? {
+    var campaignKey: String?
+    for alias in campaignKeyAliases {
+        if let v = (raw[alias] as? String)?.trimmingCharacters(in: .whitespaces), !v.isEmpty {
+            campaignKey = v
+            break
+        }
+    }
+    guard let key = campaignKey else { return nil }
+
     let type = (raw["type"] as? String)?.trimmingCharacters(in: .whitespaces).lowercased().nilIfEmpty()
-    let command = normalizeCommand(raw["command"] as? String)
-    let resolvedCommand: String? = type == "inline" ? nil : command
-    guard type != nil || resolvedCommand != nil else { return nil }
-
-    guard let viewId = (raw["viewId"] as? String)?.trimmingCharacters(in: .whitespaces).nilIfEmpty()
-    else { return nil }
-
-    let placementKey = (raw["placementKey"] as? String)?.trimmingCharacters(in: .whitespaces).nilIfEmpty()
     let rawScreenId = raw["screenId"] ?? raw["screen_id"]
     let screenId = (rawScreenId as? String)?.trimmingCharacters(in: .whitespaces).nilIfEmpty()
     let args = normalizeArgs(raw["args"])
 
-    if type == "inline" && placementKey == nil { return nil }
-
     var result: [String: Any] = [
-        "viewId": viewId,
+        "campaignKey": key,
         "args": args,
         "digiaContractSource": source,
     ]
-    if let t = type             { result["type"]         = t  }
-    if let c = resolvedCommand  { result["command"]      = c  }
-    if let pk = placementKey    { result["placementKey"] = pk }
-    if let sid = screenId       { result["screenId"]     = sid }
+    if let t = type       { result["type"]     = t   }
+    if let sid = screenId { result["screenId"] = sid }
     return result
-}
-
-internal func normalizeCommand(_ raw: String?) -> String? {
-    switch raw?.trimmingCharacters(in: .whitespaces).uppercased() ?? "" {
-    case "SHOW_INLINE":       return "SHOW_INLINE"
-    case "SHOW_DIALOG":       return "SHOW_DIALOG"
-    case "SHOW_BOTTOM_SHEET": return "SHOW_BOTTOM_SHEET"
-    default: return nil
-    }
 }
 
 internal func normalizeArgs(_ raw: Any?) -> [String: Any] {
@@ -121,6 +187,26 @@ internal func collectTextCandidates(_ root: Any) -> [String] {
         switch node {
         case let s as String:
             if s.range(of: "<digia", options: .caseInsensitive) != nil { results.append(s) }
+        case let map as [String: Any]:
+            queue.append(contentsOf: map.values)
+        case let map as [AnyHashable: Any]:
+            queue.append(contentsOf: map.values)
+        case let list as [Any]:
+            queue.append(contentsOf: list)
+        default: break
+        }
+    }
+    return results
+}
+
+private func collectTemplateTextCandidates(_ root: Any) -> [String] {
+    var results: [String] = []
+    var queue: [Any] = [root]
+    while !queue.isEmpty {
+        let node = queue.removeFirst()
+        switch node {
+        case let s as String:
+            if s.range(of: "digia-config", options: .caseInsensitive) != nil { results.append(s) }
         case let map as [String: Any]:
             queue.append(contentsOf: map.values)
         case let map as [AnyHashable: Any]:

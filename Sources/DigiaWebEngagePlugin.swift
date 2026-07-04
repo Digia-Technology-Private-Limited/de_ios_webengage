@@ -94,8 +94,8 @@ public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
         logDebug("setup complete delegateAttached=\(self.delegate != nil)")
     }
 
-    public func notifyEvent(_ event: DigiaExperienceEvent, payload: InAppPayload) {
-        logDebug("notify_event payloadId=\(payload.id)")
+    public func notifyEvent(_ event: DigiaExperienceEvent, payload: CEPTriggerPayload) {
+        logDebug("notify_event payloadId=\(payload.cepCampaignId)")
         dispatcher.dispatch(event: event, payload: payload)
     }
 
@@ -149,8 +149,10 @@ public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
             logWarning("inapp_payload_dropped reason=mapper_returned_empty"); return
         }
         payloads.forEach { payload in
-            logDebug("dispatch_inapp payloadId=\(payload.id)")
-            activeDelegate.onCampaignTriggered(payload)
+            logDebug("dispatch_inapp payloadId=\(payload.cepCampaignId)")
+            if !activeDelegate.onCampaignTriggered(payload) {
+                bridge.releaseCampaignGate(payload.cepMetadata["experimentId"] ?? payload.cepCampaignId)
+            }
         }
     }
 
@@ -169,8 +171,10 @@ public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
             customData: customData,
             metadata: metadata
         ) else { return }
-        logDebug("dispatch_inline payloadId=\(payload.id)")
-        activeDelegate.onCampaignTriggered(payload)
+        logDebug("dispatch_inline payloadId=\(payload.cepCampaignId)")
+        if !activeDelegate.onCampaignTriggered(payload) {
+            bridge.releaseCampaignGate(payload.cepMetadata["experimentId"] ?? payload.cepCampaignId)
+        }
     }
 
     private func dispatchInvalidation(campaignID: String) {

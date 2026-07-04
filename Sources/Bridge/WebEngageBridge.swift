@@ -24,6 +24,7 @@ internal protocol WebEngageBridgeProtocol: AnyObject {
     func unregisterInAppListener()
     func unregisterInlineListener()
     func isAvailable() -> Bool
+    func releaseCampaignGate(_ experimentId: String)
 }
 
 // MARK: - SDK Bridge
@@ -48,10 +49,15 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
     // Gate: mirrors Flutter's _activeExperimentIds — blocks duplicate onInAppPrepared
     // calls for the same campaign (race conditions between WE re-evaluation cycles).
     private var activeExperimentIds: Set<String> = []
+    // Pending deferred gate releases, keyed by experimentId, so they can be cancelled on
+    // unregister (or superseded by a re-add) instead of firing later against stale state.
+    private var pendingGateReleases: [String: DispatchWorkItem] = [:]
 
     private var onPayloadCallback:      (([String: Any]) -> Void)?
     private var onInvalidateCallback:   ((String) -> Void)?
     private var onInlineCampaignCallback: ((String, String, [String: Any], [String: Any]) -> Void)?
+
+    private static let gateReleaseDelay: TimeInterval = 0.5
 
     init(config: WebEngagePluginConfig = WebEngagePluginConfig(),
          dataCache: InAppDataCache = InAppDataCache()) {
@@ -136,6 +142,25 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
         onPayloadCallback    = nil
         onInvalidateCallback = nil
         activeExperimentIds.removeAll()
+        pendingGateReleases.values.forEach { $0.cancel() }
+        pendingGateReleases.removeAll()
+    }
+
+    func releaseCampaignGate(_ experimentId: String) {
+        // Deferred (not immediate) release: WebEngage's own `notification_close` event
+        // triggers an internal async re-evaluation that can re-invoke
+        // notificationPrepared for this same experimentId within milliseconds. Releasing
+        // the gate immediately would let that echo re-dispatch the campaign a second time.
+        // The delay absorbs the echo — mirrors Android's `releaseCampaignGate` behavior.
+        pendingGateReleases.removeValue(forKey: experimentId)?.cancel()
+        let release = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.pendingGateReleases.removeValue(forKey: experimentId)
+            self.activeExperimentIds.remove(experimentId)
+            self.logDebug("campaign_gate_released exp=\(experimentId)")
+        }
+        pendingGateReleases[experimentId] = release
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.gateReleaseDelay, execute: release)
     }
 
     func unregisterInlineListener() {
@@ -172,8 +197,10 @@ extension WebEngageSdkBridge: WEGInAppNotificationProtocol {
             return inAppNotificationData
         }
 
-        // ── Step 1: Identify campaign type (mirrors Flutter isDigiaCampaign) ────
-        if !isDigiaCampaign(raw) {
+        // ── Step 1: Identify campaign type + extract contract (mirrors Android's
+        //    WebEngageBridge.kt: normalize first, then check for contract presence) ──
+        let normalized = normalizeWithDigiaContract(raw)
+        guard normalized["digiaContractSource"] != nil else {
             logDebug("inapp_prepared non-Digia campaign, allowing normal rendering")
             return inAppNotificationData
         }
@@ -182,9 +209,9 @@ extension WebEngageSdkBridge: WEGInAppNotificationProtocol {
         stopRendering?.pointee = true
 
         // ── Step 3: Ensure experimentId is forwarded under the canonical key ────
-        let experimentId = str(raw["notificationEncId"]
-                               ?? raw["experimentId"] ?? raw["experiment_id"]) ?? ""
-        var payload = raw
+        let experimentId = str(normalized["notificationEncId"]
+                               ?? normalized["experimentId"] ?? normalized["experiment_id"]) ?? ""
+        var payload = normalized
         if !experimentId.isEmpty, payload["experimentId"] == nil {
             payload["experimentId"] = experimentId
         }
@@ -238,41 +265,6 @@ extension WebEngageSdkBridge: WEGInAppNotificationProtocol {
         logDebug("inapp_clicked exp=\(id) actionId=\(actionId ?? "")")
     }
 
-    // MARK: - Campaign Type Identification (mirrors Flutter isDigiaCampaign)
-
-    private func isDigiaCampaign(_ data: [String: Any]) -> Bool {
-        return hasDigiaContractKeys(data) || containsDigiaHtml(data)
-    }
-
-    private func hasDigiaContractKeys(_ data: [String: Any]) -> Bool {
-        guard let viewId = (data["viewId"] as? String)?.trimmingCharacters(in: .whitespaces),
-              !viewId.isEmpty else { return false }
-
-        let type    = data["type"]    as? String
-        let command = (data["command"] as? String)?.uppercased()
-
-        if type != nil { return true }
-        if command == "SHOW_DIALOG" || command == "SHOW_BOTTOM_SHEET" { return true }
-        return false
-    }
-
-    private func containsDigiaHtml(_ node: Any) -> Bool {
-        if let s = node as? String {
-            let lower = s.lowercased()
-            return lower.contains("<digia") || lower.contains("digia-payload")
-        }
-        if let dict = node as? [String: Any] {
-            for value in dict.values {
-                if containsDigiaHtml(value) { return true }
-            }
-        }
-        if let array = node as? [Any] {
-            for item in array {
-                if containsDigiaHtml(item) { return true }
-            }
-        }
-        return false
-    }
 }
 
 

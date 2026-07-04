@@ -141,6 +141,17 @@ internal enum DigiaTagParser {
         if let p = placement { out["placementKey"] = p }
         let screenId = attrs["screen-id"] ?? attrs["screen_id"] ?? attrs["screenId"]
         if let s = screenId { out["screenId"] = s }
+        let campaignKeyAttrNames = [
+            "campaign-key", "campaign_key", "campaignKey",
+            "digia-key", "digia_key", "digiaKey",
+            "digia-campaign", "digia_campaign", "digiaCampaign",
+            "digia-campaign-key", "digia_campaign_key", "digiaCampaignKey",
+        ]
+        var campaignKey: String?
+        for name in campaignKeyAttrNames {
+            if let value = attrs[name] { campaignKey = value; break }
+        }
+        if let ck = campaignKey { out["campaignKey"] = ck }
         if let rawArgs = attrs["args"]?.trimmingCharacters(in: .whitespaces), !rawArgs.isEmpty,
            let data = htmlUnescape(rawArgs).data(using: .utf8),
            let obj  = try? JSONSerialization.jsonObject(with: data),
