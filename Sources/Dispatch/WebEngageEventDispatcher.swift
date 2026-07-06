@@ -1,17 +1,19 @@
 import Foundation
 import DigiaEngage
 
-/// Translates `DigiaExperienceEvent` + `InAppPayload` into WebEngage analytics calls.
+/// Translates `DigiaExperienceEvent` + `CEPTriggerPayload` into WebEngage analytics calls.
 /// Mirrors `WebEngageEventDispatcher.kt` on Android.
 @MainActor
 internal final class WebEngageEventDispatcher {
 
     private let bridge: WebEngageBridgeProtocol
     private let cache: InAppDataCache
+    private let config: WebEngagePluginConfig
 
-    init(bridge: WebEngageBridgeProtocol, cache: InAppDataCache) {
+    init(bridge: WebEngageBridgeProtocol, cache: InAppDataCache, config: WebEngagePluginConfig) {
         self.bridge = bridge
         self.cache = cache
+        self.config = config
     }
 
     // MARK: - Public
@@ -21,9 +23,15 @@ internal final class WebEngageEventDispatcher {
     }
 
     /// Returns `true` when the event was dispatched.
+    ///
+    /// Routing is driven by `payload.cepMetadata["type"]`:
+    /// - `"inline"` → `notification_*` system events (WE Personalization has no lifecycle API;
+    ///   impression emits `notification_view` + `notification_close`, click emits
+    ///   `notification_click`). Dismissed is a no-op for inline.
+    /// - Other → `notification_*` system events (WE in-app API).
     @discardableResult
-    func dispatch(event: DigiaExperienceEvent, payload: InAppPayload) -> Bool {
-        if payload.content.type == "inline" {
+    func dispatch(event: DigiaExperienceEvent, payload: CEPTriggerPayload) -> Bool {
+        if payload.cepMetadata["type"] == "inline" {
             dispatchInlineEvent(event: event, payload: payload)
             return true
         }
@@ -32,17 +40,14 @@ internal final class WebEngageEventDispatcher {
 
     // MARK: - In-App
 
-    private func dispatchInAppEvent(event: DigiaExperienceEvent, payload: InAppPayload) -> Bool {
-        let experimentId: String = {
-            let fromCtx = payload.cepContext["experimentId"] ?? payload.cepContext["campaignId"]
-            return fromCtx ?? payload.id.components(separatedBy: ":").first ?? payload.id
-        }()
+    private func dispatchInAppEvent(event: DigiaExperienceEvent, payload: CEPTriggerPayload) -> Bool {
+        let experimentId = payload.cepMetadata["experimentId"] ?? payload.cepCampaignId
 
         let cachedData = cache.get(experimentId: experimentId)
         let weExperimentId = str(cachedData?["experimentId"]) ?? experimentId
         let weVariationId  = str(cachedData?["variationId"])
-                          ?? payload.cepContext["variationId"]
-                          ?? payload.id
+                          ?? payload.cepMetadata["variationId"]
+                          ?? payload.cepCampaignId
 
         let eventName: String
         switch event {
@@ -64,28 +69,26 @@ internal final class WebEngageEventDispatcher {
         bridge.trackSystemEvent(eventName: eventName, systemData: systemData, eventData: [:])
 
         if case .dismissed = event {
+            bridge.releaseCampaignGate(experimentId)
             cache.remove(experimentId: experimentId)
-            NSLog("[WebEngageEventDispatcher] dispatched: \(eventName) experimentId=\(experimentId) (evicted)")
+            logDebug("dispatched: \(eventName) experimentId=\(experimentId) (evicted)")
         } else {
-            NSLog("[WebEngageEventDispatcher] dispatched: \(eventName) experimentId=\(experimentId)")
+            logDebug("dispatched: \(eventName) experimentId=\(experimentId)")
         }
         return true
     }
 
     // MARK: - Inline
 
-    private func dispatchInlineEvent(event: DigiaExperienceEvent, payload: InAppPayload) {
+    private func dispatchInlineEvent(event: DigiaExperienceEvent, payload: CEPTriggerPayload) {
         if case .dismissed = event { return }
 
-        let experimentId: String = {
-            let fromCtx = payload.cepContext["experimentId"] ?? payload.cepContext["campaignId"]
-            return fromCtx ?? payload.id.components(separatedBy: ":").first ?? payload.id
-        }()
+        let experimentId = payload.cepMetadata["experimentId"] ?? payload.cepCampaignId
         let cachedData = cache.get(experimentId: experimentId)
         let weExperimentId = str(cachedData?["experimentId"]) ?? experimentId
         let weVariationId  = str(cachedData?["variationId"])
-                          ?? payload.cepContext["variationId"]
-                          ?? payload.id
+                          ?? payload.cepMetadata["variationId"]
+                          ?? payload.cepCampaignId
 
         var systemData: [String: Any] = [
             "experiment_id": weExperimentId,
@@ -96,30 +99,17 @@ internal final class WebEngageEventDispatcher {
         case .impressed:
             bridge.trackSystemEvent(eventName: "notification_view", systemData: systemData, eventData: [:])
             bridge.trackSystemEvent(eventName: "notification_close", systemData: systemData, eventData: [:])
+            bridge.releaseCampaignGate(experimentId)
             cache.remove(experimentId: experimentId)
-            NSLog("[WebEngageEventDispatcher] dispatched: notification_view + notification_close (inline) experimentId=\(experimentId)")
+            logDebug("dispatched: notification_view + notification_close (inline) experimentId=\(experimentId)")
         case .clicked(let elementID):
             if let cta = elementID?.trimmingCharacters(in: .whitespaces), !cta.isEmpty {
                 systemData["call_to_action"] = cta
             }
             bridge.trackSystemEvent(eventName: "notification_click", systemData: systemData, eventData: [:])
-            NSLog("[WebEngageEventDispatcher] dispatched: notification_click (inline) experimentId=\(experimentId)")
+            logDebug("dispatched: notification_click (inline) experimentId=\(experimentId)")
         case .dismissed:
             break
-        }
-    }
-
-    // MARK: - JSONValue → Any
-
-    private func jsonValueToAny(_ value: JSONValue) -> Any? {
-        switch value {
-        case .null:             return nil
-        case .bool(let b):      return b
-        case .int(let n):       return n
-        case .double(let n):    return n
-        case .string(let s):    return s
-        case .object(let d):    return d.compactMapValues { jsonValueToAny($0) }
-        case .array(let a):     return a.compactMap { jsonValueToAny($0) }
         }
     }
 
@@ -128,5 +118,9 @@ internal final class WebEngageEventDispatcher {
     private func str(_ value: Any?) -> String? {
         guard let s = (value as? String)?.trimmingCharacters(in: .whitespaces), !s.isEmpty else { return nil }
         return s
+    }
+
+    private func logDebug(_ message: String) {
+        if config.diagnosticsEnabled { NSLog("[Digia WebEngage] \(message)") }
     }
 }

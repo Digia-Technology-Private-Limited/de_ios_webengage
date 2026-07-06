@@ -1,5 +1,5 @@
-// All CEP types (InAppPayload, InAppPayloadContent, DigiaCEPPlugin, DigiaCEPDelegate,
-// DigiaExperienceEvent, DiagnosticReport, JSONValue) are provided by the DigiaEngage module.
+// All CEP types (CEPTriggerPayload, DigiaCEPPlugin, DigiaCEPDelegate,
+// DigiaExperienceEvent, DiagnosticReport) are provided by the DigiaEngage module.
 //
 // Import DigiaEngage in your source files:
 //   import DigiaEngage
