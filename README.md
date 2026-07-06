@@ -8,7 +8,7 @@ DigiaEngageWebEngage is an iOS CEP plugin that integrates the WebEngage SDK with
 
 **Quick facts**
 - **Package name:** DigiaEngageWebEngage
-- **Bundled binaries:** `Frameworks/WebEngage.xcframework` (WebEngage) and `Frameworks/WEPersonalization.xcframework` (personalization UI)
+- **Bundled binaries:** `Frameworks/WebEngage.xcframework` (WebEngage)
 - **Bundled WebEngage version:** 6.20.1 (from `Frameworks/WebEngage.xcframework`)
 - **Swift tools version:** 6.0 (see `Package.swift`)
 - **Minimum platform:** iOS 17.0

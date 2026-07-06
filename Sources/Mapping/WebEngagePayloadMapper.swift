@@ -43,42 +43,6 @@ internal final class WebEngagePayloadMapper {
         return [payload]
     }
 
-    // MARK: - Inline (WEPersonalization)
-
-    /// Maps a WEPersonalization inline campaign to a `CEPTriggerPayload`.
-    ///
-    /// Requires a non-blank `campaignKey` in `customData` — payloads without one are dropped.
-    func mapInline(
-        campaignId: String,
-        targetViewId: String,
-        customData: [String: Any],
-        metadata: [String: Any]
-    ) -> CEPTriggerPayload? {
-        let normalized = normalizeWithDigiaContract(customData)
-        guard let campaignKey = str(normalized["campaignKey"]) else {
-            logDebug("inline_map_dropped campaignId=\(campaignId) reason=missing_campaignKey")
-            return nil
-        }
-
-        let experimentId = str(campaignId) ?? campaignKey
-
-        var meta: [String: String] = [
-            "experimentId": experimentId,
-            "targetViewId": targetViewId,
-            "type": "inline",
-        ]
-        if let variationId = str(metadata["variationId"]) { meta["variationId"] = variationId }
-
-        let payload = CEPTriggerPayload(
-            cepCampaignId: experimentId,
-            campaignKey: campaignKey,
-            cepMetadata: meta,
-            variables: stringifyArgs(normalizeArgs(normalized["args"]))
-        )
-        logDebug("inline_map_result campaignId=\(campaignId) targetViewId=\(targetViewId) campaignKey=\(campaignKey)")
-        return payload
-    }
-
     // MARK: - Helpers
 
     private func stringifyArgs(_ args: [String: Any]) -> [String: String]? {
@@ -97,6 +61,6 @@ internal final class WebEngagePayloadMapper {
     }
 
     private func logDebug(_ message: String) {
-        if config.diagnosticsEnabled { NSLog("[DigiaWEMapper] \(message)") }
+        if config.diagnosticsEnabled { NSLog("[Digia WebEngage] \(message)") }
     }
 }

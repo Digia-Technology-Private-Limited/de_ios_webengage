@@ -30,7 +30,7 @@ public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
     private let mapper: WebEngagePayloadMapper
     private let config: WebEngagePluginConfig
     private let cache:  InAppDataCache
-    private lazy var dispatcher = WebEngageEventDispatcher(bridge: bridge, cache: cache)
+    private lazy var dispatcher = WebEngageEventDispatcher(bridge: bridge, cache: cache, config: config)
 
     private weak var delegate: DigiaCEPDelegate?
     private var callbacksRegistered: Bool = false
@@ -84,12 +84,6 @@ public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
             onPayload:    { [weak self] data in Task { @MainActor in self?.dispatchMappedPayloads(data) } },
             onInvalidate: { [weak self] id   in Task { @MainActor in self?.dispatchInvalidation(campaignID: id) } }
         )
-        bridge.registerInlineListener { [weak self] cid, tvid, custom, meta in
-            Task { @MainActor in
-                self?.dispatchInlinePayload(campaignId: cid, targetViewId: tvid,
-                                            customData: custom, metadata: meta)
-            }
-        }
         callbacksRegistered = true
         logDebug("setup complete delegateAttached=\(self.delegate != nil)")
     }
@@ -113,7 +107,6 @@ public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
     public func teardown() {
         logDebug("teardown start")
         bridge.unregisterInAppListener()
-        bridge.unregisterInlineListener()
         cache.clear()
         callbacksRegistered = false
         delegate = nil
@@ -156,27 +149,6 @@ public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
         }
     }
 
-    private func dispatchInlinePayload(
-        campaignId:  String,
-        targetViewId: String,
-        customData:  [String: Any],
-        metadata:    [String: Any]
-    ) {
-        guard let activeDelegate = delegate else {
-            logWarning("inline_payload_dropped campaignId=\(campaignId) reason=delegate_unavailable"); return
-        }
-        guard let payload = mapper.mapInline(
-            campaignId: campaignId,
-            targetViewId: targetViewId,
-            customData: customData,
-            metadata: metadata
-        ) else { return }
-        logDebug("dispatch_inline payloadId=\(payload.cepCampaignId)")
-        if !activeDelegate.onCampaignTriggered(payload) {
-            bridge.releaseCampaignGate(payload.cepMetadata["experimentId"] ?? payload.cepCampaignId)
-        }
-    }
-
     private func dispatchInvalidation(campaignID: String) {
         guard let activeDelegate = delegate else {
             logWarning("invalidation_dropped campaignID=\(campaignID) reason=delegate_unavailable"); return
@@ -188,10 +160,10 @@ public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
     // MARK: - Logging
 
     private func logDebug(_ message: String) {
-        if config.diagnosticsEnabled { NSLog("[DigiaWEPlugin] \(message)") }
+        if config.diagnosticsEnabled { NSLog("[Digia WebEngage] \(message)") }
     }
 
     private func logWarning(_ message: String) {
-        NSLog("[DigiaWEPlugin] WARNING: \(message)")
+        if config.diagnosticsEnabled { NSLog("[Digia WebEngage] WARNING: \(message)") }
     }
 }

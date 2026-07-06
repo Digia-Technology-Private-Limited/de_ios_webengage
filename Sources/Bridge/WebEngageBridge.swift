@@ -11,18 +11,9 @@ internal protocol WebEngageBridgeProtocol: AnyObject {
         onPayload: @escaping ([String: Any]) -> Void,
         onInvalidate: @escaping (String) -> Void
     )
-    func registerInlineListener(
-        onInlineCampaign: @escaping (
-            _ campaignId: String,
-            _ targetViewId: String,
-            _ customData: [String: Any],
-            _ metadata: [String: Any]
-        ) -> Void
-    )
     func trackSystemEvent(eventName: String, systemData: [String: Any], eventData: [String: Any])
     func navigateScreen(_ name: String)
     func unregisterInAppListener()
-    func unregisterInlineListener()
     func isAvailable() -> Bool
     func releaseCampaignGate(_ experimentId: String)
 }
@@ -55,7 +46,7 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
 
     private var onPayloadCallback:      (([String: Any]) -> Void)?
     private var onInvalidateCallback:   ((String) -> Void)?
-    private var onInlineCampaignCallback: ((String, String, [String: Any], [String: Any]) -> Void)?
+    private var pendingInAppPayloads: [[String: Any]] = []
 
     private static let gateReleaseDelay: TimeInterval = 0.5
 
@@ -77,13 +68,13 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
         // NOTE: The delegate binding happens at WebEngage init time in AppDelegate via
         // WebEngagePlugin.makeWebEngageConfig(). Nothing to do here at runtime.
         logDebug("register_inapp_listener")
-    }
 
-    func registerInlineListener(
-        onInlineCampaign: @escaping (String, String, [String: Any], [String: Any]) -> Void
-    ) {
-        // WEPersonalization not available — inline campaigns are unsupported.
-        logDebug("register_inline_listener skipped (WEPersonalization not linked)")
+        if !pendingInAppPayloads.isEmpty {
+            let queued = pendingInAppPayloads
+            pendingInAppPayloads.removeAll()
+            logDebug("flushing \(queued.count) buffered inapp payload(s)")
+            queued.forEach(onPayload)
+        }
     }
 
     func trackSystemEvent(eventName: String, systemData: [String: Any], eventData: [String: Any]) {
@@ -144,6 +135,7 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
         activeExperimentIds.removeAll()
         pendingGateReleases.values.forEach { $0.cancel() }
         pendingGateReleases.removeAll()
+        pendingInAppPayloads.removeAll()
     }
 
     func releaseCampaignGate(_ experimentId: String) {
@@ -163,22 +155,16 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.gateReleaseDelay, execute: release)
     }
 
-    func unregisterInlineListener() {
-        // WEPersonalization not available — no-op.
-        onInlineCampaignCallback = nil
-        logDebug("unregister_inline_listener skipped (WEPersonalization not linked)")
-    }
-
     func isAvailable() -> Bool { true }
 
     // MARK: - Logging
 
     private func logDebug(_ message: String) {
-        if config.diagnosticsEnabled { NSLog("[DigiaWEBridge] \(message)") }
+        if config.diagnosticsEnabled { NSLog("[Digia WebEngage] \(message)") }
     }
 
     private func logWarning(_ message: String) {
-        NSLog("[DigiaWEBridge] WARNING: \(message)")
+        if config.diagnosticsEnabled { NSLog("[Digia WebEngage] WARNING: \(message)") }
     }
 }
 
@@ -190,7 +176,7 @@ extension WebEngageSdkBridge: WEGInAppNotificationProtocol {
         _ inAppNotificationData: [String: Any]!,
         shouldStop stopRendering: UnsafeMutablePointer<ObjCBool>!
     ) -> [AnyHashable: Any]! {
-        NSLog("[DigiaWEBridge] notificationPrepared called keys=\(inAppNotificationData?.keys.sorted() ?? [])")
+        logDebug("notificationPrepared called keys=\(inAppNotificationData?.keys.sorted() ?? [])")
 
         guard let raw = inAppNotificationData else {
             logWarning("in-app prepared with nil data; skipping")
@@ -239,7 +225,14 @@ extension WebEngageSdkBridge: WEGInAppNotificationProtocol {
         }
 
         // ── Step 6: Forward to plugin ───────────────────────────────────────────
-        onPayloadCallback?(payload)
+        if let onPayloadCallback {
+            onPayloadCallback(payload)
+        } else {
+            // Listener not attached yet (setup() races this launch-time callback) — buffer
+            // instead of silently dropping. See `pendingInAppPayloads` doc comment above.
+            pendingInAppPayloads.append(payload)
+            logDebug("inapp_prepared buffered exp=\(experimentId) (listener not yet registered)")
+        }
         return inAppNotificationData
     }
 
@@ -266,8 +259,6 @@ extension WebEngageSdkBridge: WEGInAppNotificationProtocol {
     }
 
 }
-
-
 
 // MARK: - String helper
 

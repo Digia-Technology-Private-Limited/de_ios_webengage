@@ -8,10 +8,12 @@ internal final class WebEngageEventDispatcher {
 
     private let bridge: WebEngageBridgeProtocol
     private let cache: InAppDataCache
+    private let config: WebEngagePluginConfig
 
-    init(bridge: WebEngageBridgeProtocol, cache: InAppDataCache) {
+    init(bridge: WebEngageBridgeProtocol, cache: InAppDataCache, config: WebEngagePluginConfig) {
         self.bridge = bridge
         self.cache = cache
+        self.config = config
     }
 
     // MARK: - Public
@@ -67,10 +69,11 @@ internal final class WebEngageEventDispatcher {
         bridge.trackSystemEvent(eventName: eventName, systemData: systemData, eventData: [:])
 
         if case .dismissed = event {
+            bridge.releaseCampaignGate(experimentId)
             cache.remove(experimentId: experimentId)
-            NSLog("[WebEngageEventDispatcher] dispatched: \(eventName) experimentId=\(experimentId) (evicted)")
+            logDebug("dispatched: \(eventName) experimentId=\(experimentId) (evicted)")
         } else {
-            NSLog("[WebEngageEventDispatcher] dispatched: \(eventName) experimentId=\(experimentId)")
+            logDebug("dispatched: \(eventName) experimentId=\(experimentId)")
         }
         return true
     }
@@ -96,14 +99,15 @@ internal final class WebEngageEventDispatcher {
         case .impressed:
             bridge.trackSystemEvent(eventName: "notification_view", systemData: systemData, eventData: [:])
             bridge.trackSystemEvent(eventName: "notification_close", systemData: systemData, eventData: [:])
+            bridge.releaseCampaignGate(experimentId)
             cache.remove(experimentId: experimentId)
-            NSLog("[WebEngageEventDispatcher] dispatched: notification_view + notification_close (inline) experimentId=\(experimentId)")
+            logDebug("dispatched: notification_view + notification_close (inline) experimentId=\(experimentId)")
         case .clicked(let elementID):
             if let cta = elementID?.trimmingCharacters(in: .whitespaces), !cta.isEmpty {
                 systemData["call_to_action"] = cta
             }
             bridge.trackSystemEvent(eventName: "notification_click", systemData: systemData, eventData: [:])
-            NSLog("[WebEngageEventDispatcher] dispatched: notification_click (inline) experimentId=\(experimentId)")
+            logDebug("dispatched: notification_click (inline) experimentId=\(experimentId)")
         case .dismissed:
             break
         }
@@ -114,5 +118,9 @@ internal final class WebEngageEventDispatcher {
     private func str(_ value: Any?) -> String? {
         guard let s = (value as? String)?.trimmingCharacters(in: .whitespaces), !s.isEmpty else { return nil }
         return s
+    }
+
+    private func logDebug(_ message: String) {
+        if config.diagnosticsEnabled { NSLog("[Digia WebEngage] \(message)") }
     }
 }
