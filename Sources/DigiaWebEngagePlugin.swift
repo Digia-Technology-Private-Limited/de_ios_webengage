@@ -36,7 +36,7 @@ import DigiaEngage
 /// prepare the same campaign on top of itself. Nothing here binds to
 /// `holdReleased` — for a modal experience the two settle together anyway.
 @MainActor
-public final class DigiaWebEngagePlugin: DigiaCEPPluginV2 {
+public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
 
     // MARK: - State
 
@@ -98,7 +98,7 @@ public final class DigiaWebEngagePlugin: DigiaCEPPluginV2 {
         self.cache   = cache
     }
 
-    // MARK: - DigiaCEPPluginV2
+    // MARK: - DigiaCEPPlugin
 
     public func attach(host: DigiaCEPHost) {
         logDebug("attach start diagnostics=\(config.diagnosticsEnabled)")
@@ -152,7 +152,7 @@ public final class DigiaWebEngagePlugin: DigiaCEPPluginV2 {
         logDebug("detach complete")
     }
 
-    /// Not part of ``DigiaCEPPluginV2`` — a plugin-level diagnostic a host app
+    /// Not part of ``DigiaCEPPlugin`` — a plugin-level diagnostic a host app
     /// can call directly.
     public func healthCheck() -> DiagnosticReport {
         let attached = host != nil
