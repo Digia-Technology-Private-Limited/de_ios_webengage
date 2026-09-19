@@ -2,40 +2,6 @@
 @testable import DigiaEngageWebEngage
 import Foundation
 
-/// Stands in for Digia core.
-///
-/// Built on the real ``PresentationController``, so the contract's own
-/// guarantees — exactly-once settlement, no signals after the outcome,
-/// `holdReleased` settling at or before `outcome` — hold in these tests rather
-/// than being re-implemented by a fake that could drift from them.
-@MainActor
-final class FakeCEPHost: DigiaCEPHost {
-    /// When set, `deliver` returns an already-settled presentation.
-    var syncDrop: DropReason?
-
-    private(set) var delivered: [CEPTriggerPayload] = []
-    private(set) var controllers: [PresentationController] = []
-    private var nextId = 0
-
-    init(syncDrop: DropReason? = nil) {
-        self.syncDrop = syncDrop
-    }
-
-    func deliver(_ trigger: CEPTriggerPayload) -> CampaignPresentation {
-        delivered.append(trigger)
-        nextId += 1
-        let controller = PresentationController(id: "p-\(nextId)", trigger: trigger)
-        controllers.append(controller)
-        if let syncDrop {
-            controller.settle(.dropped(reason: syncDrop, detail: nil))
-        }
-        return controller.presentation
-    }
-
-    /// The controller for the most recent delivery — the test's handle on core.
-    var last: PresentationController { controllers[controllers.count - 1] }
-}
-
 /// Records every WebEngage call the plugin makes, and lets a test push the
 /// callbacks WebEngage would push.
 final class FakeWebEngageBridge: WebEngageBridgeProtocol, @unchecked Sendable {
@@ -52,6 +18,10 @@ final class FakeWebEngageBridge: WebEngageBridgeProtocol, @unchecked Sendable {
 
     private var onPayload: (([String: Any]) -> Void)?
     private var onInvalidate: ((String) -> Void)?
+
+    /// Runs from inside ``releaseGate(experimentId:)``, so a test can make
+    /// WebEngage's own release call misbehave (scenario C5).
+    var onReleaseGate: ((String) -> Void)?
 
     /// Names only — what a test usually asserts on.
     var eventNames: [String] { events.map(\.name) }
@@ -83,7 +53,10 @@ final class FakeWebEngageBridge: WebEngageBridgeProtocol, @unchecked Sendable {
 
     func navigateScreen(_ name: String) { navigatedScreens.append(name) }
 
-    func releaseGate(experimentId: String) { releasedGates.append(experimentId) }
+    func releaseGate(experimentId: String) {
+        releasedGates.append(experimentId)
+        onReleaseGate?(experimentId)
+    }
 
     func unregisterInAppListener() {
         onPayload = nil
@@ -122,13 +95,4 @@ func inlinePayload(
         "placementKey": placementKey,
         "viewId": viewId,
     ]
-}
-
-/// Lets main-actor continuations resumed by a settlement actually run.
-///
-/// The plugin binds its terminal work to `await presentation.outcome.value`, so
-/// a settlement made by a test resumes a task that runs on the *next* main-actor
-/// turn. Synchronous drops and plugin-initiated terminations do not need this.
-func drainMainActor(_ turns: Int = 5) async {
-    for _ in 0..<turns { await Task.yield() }
 }
