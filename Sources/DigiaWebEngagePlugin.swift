@@ -132,8 +132,17 @@ public final class DigiaWebEngagePlugin: DigiaCEPPluginV2 {
         // gate left set silences that campaign for the rest of the session.
         // This is the last moment the plugin can free WebEngage's side.
         for (experimentId, presentation) in live {   // a snapshot: `finish` mutates `live`
+            // Read the outcome rather than assuming `false`: `cancel()` settles on the main
+            // actor, inline, so by now the true terminal result is here. If core had already
+            // settled this presentation as `dismissed` and only its awaiting task had yet to
+            // run, hardcoding `false` silently dropped the final CEP marking for a campaign
+            // the user really did see.
             presentation.cancel()
-            finish(experimentId: experimentId, trigger: presentation.trigger, displayed: false)
+            finish(
+                experimentId: experimentId,
+                trigger: presentation.trigger,
+                displayed: presentation.outcome.settledValue.map(didDisplay) ?? false
+            )
         }
         live.removeAll()
 
@@ -199,7 +208,12 @@ public final class DigiaWebEngagePlugin: DigiaCEPPluginV2 {
         }
         logDebug("dispatch_invalidation campaignID=\(campaignID)")
         presentation.cancel()
-        finish(experimentId: campaignID, trigger: presentation.trigger, displayed: false)
+        // See `detach()`: the settled outcome is already here, and it is the honest answer.
+        finish(
+            experimentId: campaignID,
+            trigger: presentation.trigger,
+            displayed: presentation.outcome.settledValue.map(didDisplay) ?? false
+        )
     }
 
     // MARK: - Delivery
