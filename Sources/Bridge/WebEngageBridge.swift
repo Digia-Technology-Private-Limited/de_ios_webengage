@@ -21,6 +21,16 @@ internal protocol WebEngageBridgeProtocol: AnyObject {
     )
     func trackSystemEvent(eventName: String, systemData: [String: Any], eventData: [String: Any])
     func navigateScreen(_ name: String)
+
+    /// Frees the per-experiment gate that blocks WebEngage from preparing the
+    /// same campaign twice.
+    ///
+    /// The gate is set when a campaign is suppressed for Digia to render, and —
+    /// because a suppressed notification never reaches WebEngage's own dismiss
+    /// callback — nothing on WebEngage's side ever clears it again. The plugin
+    /// releases it when the presentation's `outcome` settles, on **both** arms.
+    func releaseGate(experimentId: String)
+
     func unregisterInAppListener()
     func unregisterInlineListener()
     func isAvailable() -> Bool
@@ -49,6 +59,28 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
     // calls for the same campaign (race conditions between WE re-evaluation cycles).
     private var activeExperimentIds: Set<String> = []
 
+    /// How long an in-app payload may sit buffered waiting for
+    /// `Digia.register()` before its gate is released and the payload dropped.
+    ///
+    /// Buffering at all is what lets an app-launch campaign survive the gap
+    /// between WebEngage preparing it and Digia being registered — this delegate
+    /// is installed in `AppDelegate`, strictly earlier than any plugin can
+    /// attach. Bounding it is what stops that same gap from silencing the
+    /// campaign for the whole session when registration never happens: the gate
+    /// is set the moment the campaign is suppressed, and an unreleased gate
+    /// means WebEngage never offers that campaign again.
+    ///
+    /// Spec §10.5 G-d: this timer, and only this timer, stays in the plugin.
+    static let attachGrace: TimeInterval = 10
+
+    /// Bound on the pre-attach buffer. Unbounded buffering is the bug, not the
+    /// feature — a session that never registers Digia would otherwise accumulate
+    /// every campaign WebEngage prepared.
+    private static let maxBufferedPayloads = 5
+
+    /// Payloads WebEngage prepared before any plugin attached.
+    private var buffered: [(experimentId: String, payload: [String: Any])] = []
+
     private var onPayloadCallback:      (([String: Any]) -> Void)?
     private var onInvalidateCallback:   ((String) -> Void)?
     private var onInlineCampaignCallback: ((String, String, [String: Any], [String: Any]) -> Void)?
@@ -71,6 +103,12 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
         // NOTE: The delegate binding happens at WebEngage init time in AppDelegate via
         // WebEngagePlugin.makeWebEngageConfig(). Nothing to do here at runtime.
         logDebug("register_inapp_listener")
+
+        guard !buffered.isEmpty else { return }
+        let pending = buffered
+        buffered = []
+        logDebug("flushing \(pending.count) in-app payload(s) buffered before attach")
+        pending.forEach { onPayload($0.payload) }
     }
 
     func registerInlineListener(
@@ -130,12 +168,48 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
         logDebug("navigate_screen name=\(name)")
     }
 
+    func releaseGate(experimentId: String) {
+        guard !experimentId.isEmpty else { return }
+        activeExperimentIds.remove(experimentId)
+        logDebug("release_gate exp=\(experimentId)")
+    }
+
+    // MARK: - Pre-attach buffer
+
+    /// Holds a payload that arrived before any plugin attached, under a bounded
+    /// grace period. Always ends with the campaign either delivered or its gate
+    /// released — never silently held.
+    private func bufferUntilAttach(experimentId: String, payload: [String: Any]) {
+        if buffered.count >= Self.maxBufferedPayloads {
+            let evicted = buffered.removeFirst()
+            logWarning("pre-attach buffer full — dropping \(evicted.experimentId) and releasing its gate")
+            releaseGate(experimentId: evicted.experimentId)
+        }
+        buffered.append((experimentId: experimentId, payload: payload))
+        logDebug("no plugin attached yet — buffering exp=\(experimentId)")
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.attachGrace) { [weak self] in
+            self?.expireBuffered(experimentId: experimentId)
+        }
+    }
+
+    private func expireBuffered(experimentId: String) {
+        guard let index = buffered.firstIndex(where: { $0.experimentId == experimentId }) else { return }
+        buffered.remove(at: index)
+        logWarning(
+            "no Digia plugin registered within \(Self.attachGrace)s of exp=\(experimentId) — "
+                + "releasing the WebEngage gate. Call Digia.register(DigiaWebEngagePlugin()) during startup."
+        )
+        releaseGate(experimentId: experimentId)
+    }
+
     func unregisterInAppListener() {
         logDebug("unregister_inapp_listener")
         WebEngage.sharedInstance().setValue(nil, forKey: "notificationDelegate")
         onPayloadCallback    = nil
         onInvalidateCallback = nil
         activeExperimentIds.removeAll()
+        buffered.removeAll()
     }
 
     func unregisterInlineListener() {
@@ -211,8 +285,12 @@ extension WebEngageSdkBridge: WEGInAppNotificationProtocol {
             activeExperimentIds.insert(experimentId)
         }
 
-        // ── Step 6: Forward to plugin ───────────────────────────────────────────
-        onPayloadCallback?(payload)
+        // ── Step 6: Forward to plugin, or buffer under the grace period ────────
+        if let onPayloadCallback {
+            onPayloadCallback(payload)
+        } else {
+            bufferUntilAttach(experimentId: experimentId, payload: payload)
+        }
         return inAppNotificationData
     }
 
@@ -228,7 +306,7 @@ extension WebEngageSdkBridge: WEGInAppNotificationProtocol {
         logDebug("inapp_dismissed exp=\(id)")
         if !id.isEmpty {
             // Release the gate so the campaign can show again if re-triggered.
-            activeExperimentIds.remove(id)
+            releaseGate(experimentId: id)
             onInvalidateCallback?(id)
         }
     }

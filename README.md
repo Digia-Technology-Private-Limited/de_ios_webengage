@@ -59,7 +59,7 @@ import DigiaEngage
 import DigiaEngageWebEngage
 
 // Register plugin during SDK initialization or app startup
-Digia.register(WebEngagePlugin())
+Digia.register(DigiaWebEngagePlugin())
 ```
 
 Refer to the source in `Sources/` for available APIs and integration details.

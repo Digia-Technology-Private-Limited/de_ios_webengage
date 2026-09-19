@@ -1,7 +1,7 @@
 import Foundation
 import DigiaEngage
 
-/// Maps raw WebEngage in-app / personalization payloads into `InAppPayload` values.
+/// Maps raw WebEngage in-app / personalization payloads into `CEPTriggerPayload` values.
 /// Mirrors `WebEngagePayloadMapper.kt` on Android.
 internal final class WebEngagePayloadMapper {
 
@@ -13,8 +13,8 @@ internal final class WebEngagePayloadMapper {
 
     // MARK: - In-App (modal / nudge)
 
-    /// Maps a raw `notificationPrepared` dictionary to zero or more `InAppPayload`s.
-    func map(_ data: [String: Any]) -> [InAppPayload] {
+    /// Maps a raw `notificationPrepared` dictionary to zero or more `CEPTriggerPayload`s.
+    func map(_ data: [String: Any]) -> [CEPTriggerPayload] {
         let normalized = normalizeWithDigiaContract(data)
 
         guard let campaignId = str(normalized["experimentId"] ?? normalized["id"] ?? normalized["campaignId"]) else {
@@ -28,9 +28,9 @@ internal final class WebEngagePayloadMapper {
         let type        = str(normalized["type"])?.lowercased()
         let command     = str(normalized["command"])?.uppercased()
         let viewId      = str(normalized["viewId"])
-        let args        = toJSONValueMap(normalizeArgs(normalized["args"]))
+        let args        = flattenedVariables(normalizeArgs(normalized["args"]))
 
-        var payloads: [InAppPayload] = []
+        var payloads: [CEPTriggerPayload] = []
 
         if type == "inline" {
             guard let pk = str(normalized["placementKey"]), let vid = viewId else {
@@ -38,30 +38,24 @@ internal final class WebEngagePayloadMapper {
                 logDebug("inapp_inline_not_mapped campaignId=\(campaignId) reason=\(reason)")
                 return []
             }
-            payloads.append(InAppPayload(
-                id: campaignId,
-                content: InAppPayloadContent(
-                    type: "inline",
-                    placementKey: pk,
-                    viewId: vid,
-                    command: nil,
-                    args: args,
-                    screenId: screenId
+            payloads.append(CEPTriggerPayload(
+                cepCampaignId: campaignId,
+                campaignKey: pk,
+                cepMetadata: buildMetadata(
+                    campaignId: campaignId, variationId: variationId, layoutId: layoutId,
+                    type: "inline", command: nil, viewId: vid, screenId: screenId
                 ),
-                cepContext: buildContext(campaignId: campaignId, variationId: variationId, layoutId: layoutId)
+                variables: args
             ))
         } else if let cmd = command, let vid = viewId {
-            payloads.append(InAppPayload(
-                id: campaignId,
-                content: InAppPayloadContent(
-                    type: contentType(forCommand: cmd),
-                    placementKey: nil,
-                    viewId: vid,
-                    command: cmd,
-                    args: args,
-                    screenId: screenId
+            payloads.append(CEPTriggerPayload(
+                cepCampaignId: campaignId,
+                campaignKey: vid,
+                cepMetadata: buildMetadata(
+                    campaignId: campaignId, variationId: variationId, layoutId: layoutId,
+                    type: contentType(forCommand: cmd), command: cmd, viewId: vid, screenId: screenId
                 ),
-                cepContext: buildContext(campaignId: campaignId, variationId: variationId, layoutId: layoutId)
+                variables: args
             ))
         } else {
             logDebug("inapp_nudge_not_mapped campaignId=\(campaignId) reason=unsupported_or_incomplete_contract")
@@ -73,13 +67,13 @@ internal final class WebEngagePayloadMapper {
 
     // MARK: - Inline (WEPersonalization)
 
-    /// Maps a WEPersonalization inline campaign to an `InAppPayload`.
+    /// Maps a WEPersonalization inline campaign to a `CEPTriggerPayload`.
     func mapInline(
         campaignId: String,
         targetViewId: String,
         customData: [String: Any],
         metadata: [String: Any]
-    ) -> InAppPayload? {
+    ) -> CEPTriggerPayload? {
         guard !campaignId.isEmpty else {
             logDebug("inline_map_dropped reason=missing_campaign_id"); return nil
         }
@@ -97,40 +91,44 @@ internal final class WebEngagePayloadMapper {
             return nil
         }
 
-        let args = toJSONValueMap(normalizeArgs(customData["args"]))
-        var cepCtx: [String: String] = [
+        let args = flattenedVariables(normalizeArgs(customData["args"]))
+        var cepMetadata: [String: String] = [
             "experimentId": campaignId,
             "campaignId": campaignId,
             "propertyId": propertyId,
+            "targetViewId": targetViewId,
+            "type": "inline",
         ]
-        if let v = variationId { cepCtx["variationId"] = v }
+        if let v = variationId { cepMetadata["variationId"] = v }
+        if let s = screenId { cepMetadata["screenId"] = s }
 
-        let payload = InAppPayload(
-            id: "\(campaignId):\(targetViewId)",
-            content: InAppPayloadContent(
-                type: "inline",
-                placementKey: targetViewId,
-                viewId: vid,
-                command: nil,
-                args: args,
-                screenId: screenId
-            ),
-            cepContext: cepCtx
+        let payload = CEPTriggerPayload(
+            cepCampaignId: campaignId,
+            campaignKey: targetViewId,
+            cepMetadata: cepMetadata,
+            variables: args
         )
-        logDebug("inline_map_result campaignId=\(campaignId) targetViewId=\(targetViewId) payloadId=\(payload.id)")
+        logDebug("inline_map_result campaignId=\(campaignId) targetViewId=\(targetViewId) payloadId=\(payload.cepCampaignId)")
         return payload
     }
 
     // MARK: - Helpers
 
-    private func buildContext(
+    private func buildMetadata(
         campaignId: String,
         variationId: String?,
-        layoutId: String?
+        layoutId: String?,
+        type: String,
+        command: String?,
+        viewId: String?,
+        screenId: String?
     ) -> [String: String] {
-        var ctx: [String: String] = ["experimentId": campaignId, "campaignId": campaignId]
+        var ctx: [String: String] = ["experimentId": campaignId, "campaignId": campaignId, "type": type]
         if let v = variationId { ctx["variationId"] = v }
         if let l = layoutId   { ctx["layoutId"] = l }
+        if let c = command    { ctx["command"] = c }
+        if let vid = viewId   { ctx["viewId"] = vid }
+        if let s = screenId   { ctx["screenId"] = s }
         return ctx
     }
 
@@ -142,28 +140,23 @@ internal final class WebEngagePayloadMapper {
         }
     }
 
-    // MARK: - JSONValue conversion
+    // MARK: - Flat variable conversion
 
-    private func toJSONValueMap(_ raw: [String: Any]) -> [String: JSONValue] {
-        var out: [String: JSONValue] = [:]
-        raw.forEach { key, val in if let jv = toJSONValue(val) { out[key] = jv } }
-        return out
-    }
-
-    private func toJSONValue(_ value: Any?) -> JSONValue? {
-        switch value {
-        case nil, is NSNull:      return .null
-        case let b as Bool:       return .bool(b)
-        case let n as Int:        return .int(n)
-        case let n as Double:     return .double(n)
-        case let s as String:     return .string(s)
-        case let d as [String: Any]:
-            return .object(toJSONValueMap(d))
-        case let a as [Any]:
-            return .array(a.compactMap { toJSONValue($0) })
-        default:
-            return .string(String(describing: value!))
+    /// Flattens a raw args dictionary into `[String: String]?` for `CEPTriggerPayload.variables`.
+    /// Nested objects/arrays have no flat representation and are dropped.
+    private func flattenedVariables(_ raw: [String: Any]) -> [String: String]? {
+        var out: [String: String] = [:]
+        for (key, value) in raw {
+            switch value {
+            case let s as String: out[key] = s
+            case let b as Bool: out[key] = String(b)
+            case let n as Int: out[key] = String(n)
+            case let n as Double: out[key] = String(n)
+            case is NSNull, is [String: Any], is [Any]: continue
+            default: out[key] = String(describing: value)
+            }
         }
+        return out.isEmpty ? nil : out
     }
 
     // MARK: - String extractor

@@ -32,11 +32,10 @@ let package = Package(
         ),
     ],
     dependencies: [
-        // Digia Engage iOS SDK — available via Swift Package Manager.
-        .package(
-            url: "https://github.com/Digia-Technology-Private-Limited/digia_engage_ios.git",
-            from: "1.0.0"
-        ),
+        // The sibling checkout, not a version tag: the published constraint predates
+        // core's CEP v2 surface and resolves a core this package can no longer compile
+        // against. Repoint at a tag once core publishes one carrying that contract.
+        .package(path: "../core"),
     ],
     targets: [
         // WebEngage is CocoaPods-only — bundle the xcframework locally so SPM can resolve the import.
@@ -47,10 +46,17 @@ let package = Package(
         .target(
             name: "DigiaEngageWebEngage",
             dependencies: [
-                .product(name: "DigiaEngage", package: "digia_engage_ios"),
+                .product(name: "DigiaEngage", package: "core"),
                 .target(name: "WebEngage"),
             ],
             path: "Sources"
+        ),
+        // The seam's whole point: the plugin runs here with a fake bridge, so
+        // no test needs a live WebEngage SDK (spec §10.5, plan N2 "seam rule").
+        .testTarget(
+            name: "DigiaEngageWebEngageTests",
+            dependencies: ["DigiaEngageWebEngage"],
+            path: "Tests/DigiaEngageWebEngageTests"
         ),
     ]
 )
