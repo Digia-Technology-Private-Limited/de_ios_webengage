@@ -10,22 +10,25 @@ import PackageDescription
 // │        from: "1.0.0"                                                        │
 // │    )                                                                        │
 // │                                                                             │
-// │  ⚠️  PEER DEPENDENCY – Host app must add WebEngage separately:              │
-// │    CocoaPods:  pod 'WebEngage'                                              │
-// │    SPM:        https://github.com/WebEngage/WebEngage-iOS-SDK               │
-// │                                                                             │
-// │  WEPersonalization is bundled locally in this package.                      │
+// │  ⚠️  VENDORED – WebEngage ships INSIDE this package (Frameworks/WebEngage   │
+// │  .xcframework). Do NOT also add WebEngage separately (CocoaPods or SPM) —   │
+// │  that duplicates the framework's symbols in the host binary and the linker  │
+// │  fails. This package is the only place WebEngage should be declared.        │
 // └─────────────────────────────────────────────────────────────────────────────┘
 
 let package = Package(
     name: "DigiaEngageWebEngage",
     platforms: [
-        .iOS(.v17),
+        // Follows core, which requires iOS 15. Keep these in lockstep with
+        // DigiaEngage's Package.swift and podspec — a plugin must never demand a
+        // higher floor than the core it depends on, or it silently excludes apps
+        // that can run the core perfectly well.
+        .iOS(.v15),
     ],
     products: [
-        // Only DigiaEngageWebEngage is exposed. WebEngage and WEPersonalization
-        // are internal dependencies — the host app must NOT add WebEngage
-        // separately or it will cause duplicate symbol linker errors.
+        // Only DigiaEngageWebEngage is exposed. WebEngage is an internal
+        // dependency — the host app must NOT add WebEngage separately or it
+        // will cause duplicate symbol linker errors.
         .library(
             name: "DigiaEngageWebEngage",
             targets: ["DigiaEngageWebEngage"]
