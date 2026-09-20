@@ -16,13 +16,20 @@ Pod::Spec.new do |s|
   s.swift_version    = '6.0'
   s.source_files     = 'Sources/**/*.swift'
 
-  # WebEngage is vendored, not a dependency: Package.swift bundles
-  # Frameworks/WebEngage.xcframework as a binaryTarget so SPM can resolve the
-  # import without the host adding WebEngage itself. Mirror that here rather
-  # than declaring `s.dependency 'WebEngage'` — a host app that also pulls in
-  # WebEngage (CocoaPods or SPM) links two copies of the same symbols and the
-  # linker fails. This podspec is the only place WebEngage should be declared.
-  s.vendored_frameworks = 'Frameworks/WebEngage.xcframework'
+  # WebEngage is a DEPENDENCY here, not vendored — deliberately unlike Package.swift.
+  #
+  # Package.swift bundles Frameworks/WebEngage.xcframework as a .binaryTarget because
+  # WebEngage ships CocoaPods-only and SPM has no other way to resolve the import. That
+  # reasoning does not carry over to CocoaPods, where the pod exists: vendoring a second
+  # copy collides with the one every real WebEngage app already has, and `pod install`
+  # fails outright —
+  #
+  #     The 'Pods-<App>' target has frameworks with conflicting names: webengage.xcframework
+  #
+  # react-native-webengage declares `'WebEngage', '>= 6.16.1'`, so that is the floor here.
+  # Range, never an exact pin: the host app and its RN wrapper must be able to agree on one
+  # version with us.
+  s.dependency 'WebEngage', '>= 6.16.1'
 
   # A range, never an exact pin: CocoaPods has to satisfy every podspec in the
   # host app's graph at once, and two exact pins on the same pod deadlock
