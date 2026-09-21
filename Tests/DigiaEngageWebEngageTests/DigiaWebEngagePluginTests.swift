@@ -155,25 +155,6 @@ struct DigiaWebEngagePluginTests {
         #expect(view?.systemData["id"] as? String == "var_9")
     }
 
-    // MARK: - Inline
-
-    @Test("inline reports view and close together, at display time")
-    func inlineClosesAtDisplay() async {
-        // Inline content has no close affordance, so its view is its close. The
-        // terminal path must not report a second one.
-        let h = Harness()
-        h.bridge.emitPrepared(inlinePayload())
-
-        h.core.markDisplaying()
-        #expect(h.bridge.eventNames == ["notification_view", "notification_close"])
-
-        h.core.settle(.dismissed(reason: .screenExit, completed: true))
-        await drainMainActor()
-
-        #expect(h.bridge.eventNames == ["notification_view", "notification_close"], "no duplicate close")
-        #expect(h.bridge.releasedGates == ["exp_inline"])
-    }
-
     // MARK: - Wiring
 
     @Test("screen changes reach WebEngage")

@@ -82,17 +82,3 @@ func inAppPayload(
         "variationId": variationId,
     ]
 }
-
-/// A `notificationPrepared` payload for an inline campaign.
-func inlinePayload(
-    experimentId: String = "exp_inline",
-    placementKey: String = "home_banner",
-    viewId: String = "banner_view"
-) -> [String: Any] {
-    [
-        "experimentId": experimentId,
-        "type": "inline",
-        "placementKey": placementKey,
-        "viewId": viewId,
-    ]
-}

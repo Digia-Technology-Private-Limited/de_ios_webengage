@@ -27,24 +27,10 @@ internal final class WebEngageEventDispatcher {
     }
 
     /// The experience became visible.
-    ///
-    /// Inline content has no close affordance and no terminal moment of its own,
-    /// so its view *is* its close — both are reported here and the cache entry
-    /// goes with them.
     func notificationViewed(_ payload: CEPTriggerPayload) {
         let ids = identifiers(for: payload)
         bridge.trackSystemEvent(eventName: "notification_view", systemData: ids.systemData, eventData: [:])
-
-        guard isInline(payload) else {
-            NSLog("[WebEngageEventDispatcher] dispatched: notification_view experimentId=\(ids.experimentId)")
-            return
-        }
-        bridge.trackSystemEvent(eventName: "notification_close", systemData: ids.systemData, eventData: [:])
-        cache.remove(experimentId: ids.experimentId)
-        NSLog(
-            "[WebEngageEventDispatcher] dispatched: notification_view + notification_close (inline) "
-                + "experimentId=\(ids.experimentId)"
-        )
+        NSLog("[WebEngageEventDispatcher] dispatched: notification_view experimentId=\(ids.experimentId)")
     }
 
     /// A qualifying interaction with the experience.
@@ -68,8 +54,7 @@ internal final class WebEngageEventDispatcher {
     func experienceEnded(_ payload: CEPTriggerPayload, displayed: Bool) {
         let ids = identifiers(for: payload)
 
-        // Inline already reported its close at view time.
-        if displayed, !isInline(payload) {
+        if displayed {
             bridge.trackSystemEvent(eventName: "notification_close", systemData: ids.systemData, eventData: [:])
             NSLog("[WebEngageEventDispatcher] dispatched: notification_close experimentId=\(ids.experimentId)")
         } else {
@@ -102,10 +87,6 @@ internal final class WebEngageEventDispatcher {
                 "id": weVariationId,
             ]
         )
-    }
-
-    private func isInline(_ payload: CEPTriggerPayload) -> Bool {
-        payload.cepMetadata["type"] == "inline"
     }
 
     // MARK: - Helper
