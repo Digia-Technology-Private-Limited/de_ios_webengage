@@ -149,9 +149,18 @@ internal final class WebEngagePayloadMapper {
         for (key, value) in raw {
             switch value {
             case let s as String: out[key] = s
-            case let b as Bool: out[key] = String(b)
-            case let n as Int: out[key] = String(n)
-            case let n as Double: out[key] = String(n)
+            // Every JSON number arrives as an NSNumber, and an NSNumber bridges to `Bool` as
+            // readily as to `Int` — `case let b as Bool` above the numeric cases matched a
+            // plain `1` and rendered an authored count as "true". Only the CFBoolean
+            // singletons are really booleans.
+            case let n as NSNumber:
+                if CFGetTypeID(n) == CFBooleanGetTypeID() {
+                    out[key] = String(n.boolValue)
+                } else {
+                    let d = n.doubleValue
+                    out[key] = d == d.rounded() && abs(d) < 1e15
+                        ? String(n.int64Value) : String(d)
+                }
             case is NSNull, is [String: Any], is [Any]: continue
             default: out[key] = String(describing: value)
             }
