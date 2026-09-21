@@ -246,8 +246,8 @@ extension WebEngageSdkBridge: WEGInAppNotificationProtocol {
             return inAppNotificationData
         }
 
-        // ── Step 1: Identify campaign type (mirrors Flutter isDigiaCampaign) ────
-        if !isDigiaCampaign(raw) {
+        // ── Step 1: Is this campaign ours? (mirrors Flutter isDigiaCampaign) ────
+        if !WebEngagePayloadMapper.isDigiaCampaign(raw) {
             logDebug("inapp_prepared non-Digia campaign, allowing normal rendering")
             return inAppNotificationData
         }
@@ -265,7 +265,26 @@ extension WebEngageSdkBridge: WEGInAppNotificationProtocol {
 
         logDebug("inapp_prepared exp=\(experimentId) isDigia=true suppress=true")
 
-        // ── Step 4: Cache for event dispatch ────────────────────────────────────
+        // ── Step 4: Claimed, but not mappable → let go of everything ────────────
+        // `isDigiaCampaign` is deliberately wider than the mapper: a
+        // `<template id="digia-config">` block claims the campaign even when the
+        // marketer left no campaign key inside it. WebEngage's own renderer is
+        // already suppressed by the time we know, and that is the safe half —
+        // what must not also happen is this bridge taking the per-experiment gate
+        // and the cache entry. Nothing will ever settle a presentation that was
+        // never delivered, so the gate would stay set and silence that experiment
+        // for the rest of the session. Abstaining from both is the whole of the
+        // release path: unlike Android, iOS hands back no in-app queue handle.
+        guard WebEngagePayloadMapper.resolveConfig(raw) != nil else {
+            logWarning(
+                "inapp_prepared exp=\(experimentId) — a digia-config block with no campaign key. "
+                    + "Suppressed and dropped, holding neither the gate nor the cache. Add a "
+                    + "<meta name=\"campaign-key\" content=\"…\"> to the block."
+            )
+            return inAppNotificationData
+        }
+
+        // ── Step 5: Cache for event dispatch ────────────────────────────────────
         if !experimentId.isEmpty {
             var cacheEntry = payload
             cacheEntry["experimentId"] = experimentId
@@ -276,7 +295,7 @@ extension WebEngageSdkBridge: WEGInAppNotificationProtocol {
             dataCache.put(experimentId: experimentId, data: cacheEntry)
         }
 
-        // ── Step 5: Gate check — block duplicate fires for the same campaign ───
+        // ── Step 6: Gate check — block duplicate fires for the same campaign ───
         if !experimentId.isEmpty {
             if activeExperimentIds.contains(experimentId) {
                 logDebug("inapp_prepared duplicate blocked exp=\(experimentId)")
@@ -285,7 +304,7 @@ extension WebEngageSdkBridge: WEGInAppNotificationProtocol {
             activeExperimentIds.insert(experimentId)
         }
 
-        // ── Step 6: Forward to plugin, or buffer under the grace period ────────
+        // ── Step 7: Forward to plugin, or buffer under the grace period ────────
         if let onPayloadCallback {
             onPayloadCallback(payload)
         } else {
@@ -314,42 +333,6 @@ extension WebEngageSdkBridge: WEGInAppNotificationProtocol {
     @objc func notification(_ inAppNotificationData: [String: Any]!, clickedWithAction actionId: String!) {
         let id = inAppNotificationData?["experimentId"] as? String ?? ""
         logDebug("inapp_clicked exp=\(id) actionId=\(actionId ?? "")")
-    }
-
-    // MARK: - Campaign Type Identification (mirrors Flutter isDigiaCampaign)
-
-    private func isDigiaCampaign(_ data: [String: Any]) -> Bool {
-        return hasDigiaContractKeys(data) || containsDigiaHtml(data)
-    }
-
-    private func hasDigiaContractKeys(_ data: [String: Any]) -> Bool {
-        guard let viewId = (data["viewId"] as? String)?.trimmingCharacters(in: .whitespaces),
-              !viewId.isEmpty else { return false }
-
-        let type    = data["type"]    as? String
-        let command = (data["command"] as? String)?.uppercased()
-
-        if type != nil { return true }
-        if command == "SHOW_DIALOG" || command == "SHOW_BOTTOM_SHEET" { return true }
-        return false
-    }
-
-    private func containsDigiaHtml(_ node: Any) -> Bool {
-        if let s = node as? String {
-            let lower = s.lowercased()
-            return lower.contains("<digia") || lower.contains("digia-payload")
-        }
-        if let dict = node as? [String: Any] {
-            for value in dict.values {
-                if containsDigiaHtml(value) { return true }
-            }
-        }
-        if let array = node as? [Any] {
-            for item in array {
-                if containsDigiaHtml(item) { return true }
-            }
-        }
-        return false
     }
 }
 

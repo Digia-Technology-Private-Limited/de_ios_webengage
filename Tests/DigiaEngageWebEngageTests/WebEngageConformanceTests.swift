@@ -175,13 +175,13 @@ struct WebEngageConformanceTests {
     @Test("C6 — re-trigger the same campaignKey while the first is live: two presentations, two releases")
     func c6ReTriggerSameCampaignKey() async {
         // Two WebEngage experiments pointing at one Digia campaign: same
-        // `campaignKey` (the viewId), different `cepCampaignId`. The plugin keys
-        // its bookkeeping by experiment, so the two must not collide — and
-        // identity is `CampaignPresentation.id` regardless, which is what makes
-        // the CleverTap form of this collision harmless too.
+        // `campaignKey`, different `cepCampaignId`. The plugin keys its
+        // bookkeeping by experiment, so the two must not collide — and identity
+        // is `CampaignPresentation.id` regardless, which is what makes the
+        // CleverTap form of this collision harmless too.
         let h = Harness()
-        h.bridge.emitPrepared(inAppPayload(experimentId: "exp_a", viewId: "promo"))
-        h.bridge.emitPrepared(inAppPayload(experimentId: "exp_b", viewId: "promo"))
+        h.bridge.emitPrepared(inAppPayload(experimentId: "exp_a", campaignKey: "promo"))
+        h.bridge.emitPrepared(inAppPayload(experimentId: "exp_b", campaignKey: "promo"))
 
         #expect(h.host.delivered.count == 2)
         #expect(h.host.delivered.map(\.campaignKey) == ["promo", "promo"])

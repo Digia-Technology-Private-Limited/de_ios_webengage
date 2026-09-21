@@ -69,16 +69,15 @@ final class FakeWebEngageBridge: WebEngageBridgeProtocol, @unchecked Sendable {
     func isAvailable() -> Bool { true }
 }
 
-/// A `notificationPrepared` payload for a modal campaign.
+/// A `notificationPrepared` payload for a Digia campaign.
 func inAppPayload(
     experimentId: String = "exp_1",
-    viewId: String = "onboarding_tip",
+    campaignKey: String = "onboarding_tip",
     variationId: String = "var_1"
 ) -> [String: Any] {
     [
         "experimentId": experimentId,
-        "command": "SHOW_DIALOG",
-        "viewId": viewId,
+        "digiaKey": campaignKey,
         "variationId": variationId,
     ]
 }

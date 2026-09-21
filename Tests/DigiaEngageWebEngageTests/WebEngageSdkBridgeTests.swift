@@ -21,18 +21,21 @@ struct WebEngageSdkBridgeTests {
         WebEngageSdkBridge(config: WebEngagePluginConfig(diagnosticsEnabled: false))
     }
 
-    private func prepare(_ bridge: WebEngageSdkBridge, experimentId: String) {
+    /// Returns whether WebEngage's own renderer was suppressed.
+    @discardableResult
+    private func prepare(
+        _ bridge: WebEngageSdkBridge,
+        experimentId: String,
+        payload: [String: Any]? = nil
+    ) -> Bool {
         var stop = ObjCBool(false)
         _ = withUnsafeMutablePointer(to: &stop) { pointer in
             bridge.notificationPrepared(
-                [
-                    "experimentId": experimentId,
-                    "command": "SHOW_DIALOG",
-                    "viewId": "onboarding_tip",
-                ],
+                payload ?? ["experimentId": experimentId, "digiaKey": "onboarding_tip"],
                 shouldStop: pointer
             )
         }
+        return stop.boolValue
     }
 
     @Test("a payload prepared before attach is flushed when the plugin attaches")
@@ -98,5 +101,34 @@ struct WebEngageSdkBridgeTests {
         prepare(bridge, experimentId: "exp_1")
 
         #expect(received == ["exp_1", "exp_1"])
+    }
+
+    @Test("a campaign claimed by a keyless digia-config block is suppressed but holds nothing")
+    func keylessBlockHoldsNoGate() {
+        // The gate deliberately claims a `<template id="digia-config">` block whether or not
+        // the marketer put a campaign key in it, so the mapper can refuse a campaign the
+        // bridge already suppressed. Nothing will ever settle a presentation that was never
+        // delivered — so if this took the per-experiment gate, that experiment would be
+        // silenced for the rest of the session with no way back.
+        let bridge = makeBridge()
+        var received: [String] = []
+        bridge.registerInAppListener(
+            onPayload: { received.append($0["experimentId"] as? String ?? "") },
+            onInvalidate: { _ in }
+        )
+
+        let suppressed = prepare(
+            bridge,
+            experimentId: "exp_1",
+            payload: [
+                "experimentId": "exp_1",
+                "html": #"<template id="digia-config"><meta name="tier" content="gold"></template>"#,
+            ])
+
+        #expect(suppressed, "a block is unambiguously ours — WebEngage must not render under it")
+        #expect(received.isEmpty, "and the mapper cannot map it, so nothing is delivered")
+
+        prepare(bridge, experimentId: "exp_1")
+        #expect(received == ["exp_1"], "the gate was never taken: the same experiment can come back")
     }
 }

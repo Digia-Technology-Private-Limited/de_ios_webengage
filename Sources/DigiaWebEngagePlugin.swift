@@ -104,7 +104,7 @@ public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
         logDebug("attach start diagnostics=\(config.diagnosticsEnabled)")
         self.host = host
         bridge.registerInAppListener(
-            onPayload:    { [weak self] data in onMainActor { self?.dispatchMappedPayloads(data) } },
+            onPayload:    { [weak self] data in onMainActor { self?.dispatchMappedPayload(data) } },
             onInvalidate: { [weak self] id   in onMainActor { self?.dispatchInvalidation(campaignID: id) } }
         )
         bridge.registerInlineListener { [weak self] cid, tvid, custom, meta in
@@ -175,12 +175,11 @@ public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
 
     // MARK: - Private dispatch
 
-    private func dispatchMappedPayloads(_ rawPayload: [String: Any]) {
-        let payloads = mapper.map(rawPayload)
-        guard !payloads.isEmpty else {
-            logWarning("inapp_payload_dropped reason=mapper_returned_empty"); return
+    private func dispatchMappedPayload(_ rawPayload: [String: Any]) {
+        guard let payload = mapper.map(rawPayload) else {
+            logWarning("inapp_payload_dropped reason=no_campaign_key"); return
         }
-        payloads.forEach(deliver)
+        deliver(payload)
     }
 
     private func dispatchInlinePayload(
