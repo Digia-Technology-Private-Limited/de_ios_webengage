@@ -14,6 +14,7 @@ internal final class WebEngageEventDispatcher {
 
     private let bridge: WebEngageBridgeProtocol
     private let cache: InAppDataCache
+    private let log = DigiaLogger("WE")
 
     init(bridge: WebEngageBridgeProtocol, cache: InAppDataCache) {
         self.bridge = bridge
@@ -22,26 +23,31 @@ internal final class WebEngageEventDispatcher {
 
     // MARK: - Public
 
-    func forwardScreen(_ name: String) {
-        bridge.navigateScreen(name)
+    func forwardScreen(_ screenName: String) {
+        log.d("Screen forwarded (screen=\(screenName))")
+        bridge.navigateScreen(screenName)
     }
 
     /// The experience became visible.
     func notificationViewed(_ payload: CEPTriggerPayload) {
         let ids = identifiers(for: payload)
+        log.i("CEP impression marked (notification_view, experimentId=\(ids.experimentId))", campaign: payload.campaignKey)
         bridge.trackSystemEvent(eventName: "notification_view", systemData: ids.systemData, eventData: [:])
-        NSLog("[WebEngageEventDispatcher] dispatched: notification_view experimentId=\(ids.experimentId)")
     }
 
     /// A qualifying interaction with the experience.
     func notificationClicked(_ payload: CEPTriggerPayload, elementId: String?) {
         let ids = identifiers(for: payload)
         var systemData = ids.systemData
-        if let cta = elementId?.trimmingCharacters(in: .whitespaces), !cta.isEmpty {
+        let cta = elementId.flatMap { raw -> String? in
+            let trimmed = raw.trimmingCharacters(in: .whitespaces)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        if let cta {
             systemData["call_to_action"] = cta
         }
+        log.i("CEP click marked (notification_click, experimentId=\(ids.experimentId)\(cta != nil ? ", cta=\(cta!)" : ""))", campaign: payload.campaignKey)
         bridge.trackSystemEvent(eventName: "notification_click", systemData: systemData, eventData: [:])
-        NSLog("[WebEngageEventDispatcher] dispatched: notification_click experimentId=\(ids.experimentId)")
     }
 
     /// The presentation settled. Terminal, and reached on **both** outcome arms.
@@ -56,14 +62,11 @@ internal final class WebEngageEventDispatcher {
 
         if displayed {
             bridge.trackSystemEvent(eventName: "notification_close", systemData: ids.systemData, eventData: [:])
-            NSLog("[WebEngageEventDispatcher] dispatched: notification_close experimentId=\(ids.experimentId)")
-        } else {
-            NSLog(
-                "[WebEngageEventDispatcher] ended without a close experimentId=\(ids.experimentId) "
-                    + "displayed=\(displayed)"
-            )
         }
         cache.remove(experimentId: ids.experimentId)
+        let isInline = payload.cepMetadata["propertyId"] != nil
+        let channel = isInline ? "inline" : "in-app"
+        log.i("CEP hold released — \(channel) (experimentId=\(ids.experimentId))", campaign: payload.campaignKey)
     }
 
     // MARK: - Identifiers

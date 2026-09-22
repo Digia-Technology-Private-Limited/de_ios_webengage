@@ -22,6 +22,7 @@ import DigiaEngage
 internal final class WebEngagePayloadMapper {
 
     private let config: WebEngagePluginConfig
+    private let log = DigiaLogger("WE")
 
     init(config: WebEngagePluginConfig = WebEngagePluginConfig()) {
         self.config = config
@@ -33,7 +34,7 @@ internal final class WebEngagePayloadMapper {
     /// campaign carries no Digia campaign key.
     func map(_ data: [String: Any]) -> CEPTriggerPayload? {
         guard let config = Self.resolveConfig(data) else {
-            logDebug("inapp_map_dropped reason=no_campaign_key keys=\(data.keys.sorted())")
+            log.d("In-app payload dropped — no campaign key found (keys=\(data.keys.sorted()))")
             return nil
         }
 
@@ -46,7 +47,7 @@ internal final class WebEngagePayloadMapper {
         // Carried on the trigger so every WebEngage call site derives its ids from one place.
         let variationId = Self.stringValue(data["variationId"]) ?? experimentId
 
-        logDebug("inapp_map_result campaignKey=\(config.campaignKey) exp=\(experimentId)")
+        log.d("In-app payload mapped (campaignKey=\(config.campaignKey), experimentId=\(experimentId))", campaign: config.campaignKey)
         return CEPTriggerPayload(
             cepCampaignId: experimentId,
             campaignKey: config.campaignKey,
@@ -77,18 +78,20 @@ internal final class WebEngagePayloadMapper {
         metadata: [String: Any] = [:]
     ) -> CEPTriggerPayload? {
         guard !campaignId.isEmpty else {
-            logDebug("inline_map_dropped reason=missing_campaign_id"); return nil
+            log.d("Inline payload dropped — missing campaignId")
+            return nil
         }
         guard !targetViewId.isEmpty else {
-            logDebug("inline_map_dropped campaignId=\(campaignId) reason=missing_targetViewId"); return nil
+            log.d("Inline payload dropped — missing targetViewId (campaignId=\(campaignId))")
+            return nil
         }
         guard let config = Self.resolveConfig(customData) else {
-            logDebug("inline_map_dropped campaignId=\(campaignId) reason=no_campaign_key")
+            log.d("Inline payload dropped — no campaign key found (campaignId=\(campaignId))")
             return nil
         }
 
         let identity = "\(campaignId):\(targetViewId)"
-        logDebug("inline_map_result campaignKey=\(config.campaignKey) id=\(identity)")
+        log.d("Inline payload mapped (campaignKey=\(config.campaignKey), id=\(identity))", campaign: config.campaignKey)
         return CEPTriggerPayload(
             cepCampaignId: identity,
             campaignKey: config.campaignKey,
@@ -378,9 +381,5 @@ internal final class WebEngagePayloadMapper {
         let text = (value as? String) ?? String(describing: value)
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
-    }
-
-    private func logDebug(_ message: String) {
-        if config.diagnosticsEnabled { NSLog("[DigiaWEMapper] \(message)") }
     }
 }

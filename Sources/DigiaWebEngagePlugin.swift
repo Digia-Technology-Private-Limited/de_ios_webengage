@@ -47,6 +47,7 @@ public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
     private let config: WebEngagePluginConfig
     private let cache:  InAppDataCache
     private lazy var dispatcher = WebEngageEventDispatcher(bridge: bridge, cache: cache)
+    private let log = DigiaLogger("WE")
 
     private var host: DigiaCEPHost?
     private var callbacksRegistered: Bool = false
@@ -101,8 +102,8 @@ public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
     // MARK: - DigiaCEPPlugin
 
     public func attach(host: DigiaCEPHost) {
-        logDebug("attach start diagnostics=\(config.diagnosticsEnabled)")
         self.host = host
+        log.i("Plugin attached — listening for in-app and inline campaigns")
         bridge.registerInAppListener(
             onPayload:    { [weak self] data in onMainActor { self?.dispatchMappedPayload(data) } },
             onInvalidate: { [weak self] id   in onMainActor { self?.dispatchInvalidation(campaignID: id) } }
@@ -114,16 +115,13 @@ public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
             }
         }
         callbacksRegistered = true
-        logDebug("attach complete hostAttached=\(self.host != nil)")
     }
 
     public func onScreenChanged(_ screenName: String) {
-        logDebug("screen_changed name=\(screenName)")
         dispatcher.forwardScreen(screenName)
     }
 
     public func detach() {
-        logDebug("detach start")
         bridge.unregisterInAppListener()
         bridge.unregisterInlineListener()
 
@@ -149,7 +147,7 @@ public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
         cache.clear()
         callbacksRegistered = false
         host = nil
-        logDebug("detach complete")
+        log.i("Plugin detached")
     }
 
     /// Not part of ``DigiaCEPPlugin`` — a plugin-level diagnostic a host app
@@ -176,9 +174,7 @@ public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
     // MARK: - Private dispatch
 
     private func dispatchMappedPayload(_ rawPayload: [String: Any]) {
-        guard let payload = mapper.map(rawPayload) else {
-            logWarning("inapp_payload_dropped reason=no_campaign_key"); return
-        }
+        guard let payload = mapper.map(rawPayload) else { return }
         deliver(payload)
     }
 
@@ -202,10 +198,8 @@ public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
     /// presentation is cancelled; core settles it and the normal terminal path
     /// does the rest.
     private func dispatchInvalidation(campaignID: String) {
-        guard let presentation = live[campaignID] else {
-            logDebug("invalidation for an experiment we do not hold campaignID=\(campaignID)"); return
-        }
-        logDebug("dispatch_invalidation campaignID=\(campaignID)")
+        guard let presentation = live[campaignID] else { return }
+        log.d("WebEngage dismissed the campaign itself — cancelling (experimentId=\(campaignID))", campaign: presentation.trigger.campaignKey)
         presentation.cancel()
         // See `detach()`: the settled outcome is already here, and it is the honest answer.
         finish(
@@ -224,11 +218,13 @@ public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
     /// see the type doc.
     private func deliver(_ trigger: CEPTriggerPayload) {
         guard let host else {
-            logWarning("payload_dropped payloadId=\(trigger.cepCampaignId) reason=host_unavailable")
+            log.w("Payload dropped — host unavailable (payloadId=\(trigger.cepCampaignId))", campaign: trigger.campaignKey)
             return
         }
         let experimentId = trigger.cepMetadata["experimentId"] ?? trigger.cepCampaignId
-        logDebug("deliver payloadId=\(trigger.cepCampaignId) exp=\(experimentId)")
+        let isInline = trigger.cepMetadata["propertyId"] != nil
+        let channel = isInline ? "inline" : "in-app"
+        log.i("Received — \(channel) (experimentId=\(experimentId))", campaign: trigger.campaignKey)
 
         let presentation = host.deliver(trigger)
         live[experimentId] = presentation
@@ -265,17 +261,6 @@ public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
         guard live.removeValue(forKey: experimentId) != nil else { return }
         dispatcher.experienceEnded(trigger, displayed: displayed)
         bridge.releaseGate(experimentId: experimentId)
-        logDebug("finished exp=\(experimentId) displayed=\(displayed)")
-    }
-
-    // MARK: - Logging
-
-    private func logDebug(_ message: String) {
-        if config.diagnosticsEnabled { NSLog("[DigiaWEPlugin] \(message)") }
-    }
-
-    private func logWarning(_ message: String) {
-        NSLog("[DigiaWEPlugin] WARNING: \(message)")
     }
 }
 

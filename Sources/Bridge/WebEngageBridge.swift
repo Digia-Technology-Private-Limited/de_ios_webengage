@@ -1,5 +1,6 @@
 @preconcurrency import Foundation
 @preconcurrency import WebEngage
+import DigiaEngage
 
 // MARK: - Bridge Protocol
 
@@ -58,6 +59,7 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
     // Gate: mirrors Flutter's _activeExperimentIds — blocks duplicate onInAppPrepared
     // calls for the same campaign (race conditions between WE re-evaluation cycles).
     private var activeExperimentIds: Set<String> = []
+    private let log = DigiaLogger("WE")
 
     /// How long an in-app payload may sit buffered waiting for
     /// `Digia.register()` before its gate is released and the payload dropped.
@@ -85,8 +87,14 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
     private var onInvalidateCallback:   ((String) -> Void)?
     private var onInlineCampaignCallback: ((String, String, [String: Any], [String: Any]) -> Void)?
 
-    init(config: WebEngagePluginConfig = WebEngagePluginConfig(),
-         dataCache: InAppDataCache = InAppDataCache()) {
+    private override init() {
+        self.config = WebEngagePluginConfig()
+        self.dataCache = InAppDataCache()
+        super.init()
+    }
+
+    /// Internal init for tests allowing a custom config.
+    internal init(config: WebEngagePluginConfig, dataCache: InAppDataCache = InAppDataCache()) {
         self.config = config
         self.dataCache = dataCache
         super.init()
@@ -102,12 +110,12 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
         onInvalidateCallback = onInvalidate
         // NOTE: The delegate binding happens at WebEngage init time in AppDelegate via
         // WebEngagePlugin.makeWebEngageConfig(). Nothing to do here at runtime.
-        logDebug("register_inapp_listener")
+        log.d("In-app listener registered")
 
         guard !buffered.isEmpty else { return }
         let pending = buffered
         buffered = []
-        logDebug("flushing \(pending.count) in-app payload(s) buffered before attach")
+        log.d("Flushing \(pending.count) in-app payload(s) buffered before attach")
         pending.forEach { onPayload($0.payload) }
     }
 
@@ -115,7 +123,7 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
         onInlineCampaign: @escaping (String, String, [String: Any], [String: Any]) -> Void
     ) {
         // WEPersonalization not available — inline campaigns are unsupported.
-        logDebug("register_inline_listener skipped (WEPersonalization not linked)")
+        log.d("Inline listener skipped — WEPersonalization not linked")
     }
 
     func trackSystemEvent(eventName: String, systemData: [String: Any], eventData: [String: Any]) {
@@ -130,7 +138,7 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
             andValue["event_data_overrides"] = eventData
         }
 
-        logDebug("trackSystemEvent name=\(eventName) andValue=\(andValue)")
+        log.d("Track system event (name=\(eventName))")
 
         // Use trackSDKEventWithName:andValue: which bypasses reserved-name
         // guards and routes through the full SDK event pipeline.
@@ -143,7 +151,7 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
                let closes = renderer.perform(NSSelectorFromString("sessionCloses"))?.takeUnretainedValue() as? NSMutableDictionary {
                 let closeKey = expId + "_close"
                 closes[closeKey] = 1
-                logDebug("Marked \(closeKey) in sessionCloses")
+                log.d("Marked in sessionCloses (key=\(closeKey))")
             }
         }
 
@@ -156,22 +164,21 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
                 if let result = analytics.perform(trackSel, with: eventName, with: andValue) {
                     _ = result.takeUnretainedValue()
                 }
-                logDebug("trackSystemEvent fired: \(eventName)")
+                log.d("System event fired (name=\(eventName))")
             } else {
-                logDebug("trackSystemEvent analytics not available")
+                log.w("System event failed — analytics not available (name=\(eventName))")
             }
         }
     }
 
     func navigateScreen(_ name: String) {
         WebEngage.sharedInstance().analytics.navigatingToScreen(withName: name)
-        logDebug("navigate_screen name=\(name)")
     }
 
     func releaseGate(experimentId: String) {
         guard !experimentId.isEmpty else { return }
         activeExperimentIds.remove(experimentId)
-        logDebug("release_gate exp=\(experimentId)")
+        log.d("Gate released (experimentId=\(experimentId))")
     }
 
     // MARK: - Pre-attach buffer
@@ -182,11 +189,11 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
     private func bufferUntilAttach(experimentId: String, payload: [String: Any]) {
         if buffered.count >= Self.maxBufferedPayloads {
             let evicted = buffered.removeFirst()
-            logWarning("pre-attach buffer full — dropping \(evicted.experimentId) and releasing its gate")
+            log.w("Pre-attach buffer full — dropping (experimentId=\(evicted.experimentId)) and releasing gate")
             releaseGate(experimentId: evicted.experimentId)
         }
         buffered.append((experimentId: experimentId, payload: payload))
-        logDebug("no plugin attached yet — buffering exp=\(experimentId)")
+        log.d("No plugin attached yet — buffering (experimentId=\(experimentId))")
 
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.attachGrace) { [weak self] in
             self?.expireBuffered(experimentId: experimentId)
@@ -196,15 +203,15 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
     private func expireBuffered(experimentId: String) {
         guard let index = buffered.firstIndex(where: { $0.experimentId == experimentId }) else { return }
         buffered.remove(at: index)
-        logWarning(
-            "no Digia plugin registered within \(Self.attachGrace)s of exp=\(experimentId) — "
+        log.w(
+            "No Digia plugin registered within \(Self.attachGrace)s of experimentId=\(experimentId) — "
                 + "releasing the WebEngage gate. Call Digia.register(DigiaWebEngagePlugin()) during startup."
         )
         releaseGate(experimentId: experimentId)
     }
 
     func unregisterInAppListener() {
-        logDebug("unregister_inapp_listener")
+        log.d("In-app listener unregistered")
         WebEngage.sharedInstance().setValue(nil, forKey: "notificationDelegate")
         onPayloadCallback    = nil
         onInvalidateCallback = nil
@@ -215,20 +222,10 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
     func unregisterInlineListener() {
         // WEPersonalization not available — no-op.
         onInlineCampaignCallback = nil
-        logDebug("unregister_inline_listener skipped (WEPersonalization not linked)")
+        log.d("Inline listener unregister skipped — WEPersonalization not linked")
     }
 
     func isAvailable() -> Bool { true }
-
-    // MARK: - Logging
-
-    private func logDebug(_ message: String) {
-        if config.diagnosticsEnabled { NSLog("[DigiaWEBridge] \(message)") }
-    }
-
-    private func logWarning(_ message: String) {
-        NSLog("[DigiaWEBridge] WARNING: \(message)")
-    }
 }
 
 // MARK: - WEGInAppNotificationProtocol
@@ -239,16 +236,14 @@ extension WebEngageSdkBridge: WEGInAppNotificationProtocol {
         _ inAppNotificationData: [String: Any]!,
         shouldStop stopRendering: UnsafeMutablePointer<ObjCBool>!
     ) -> [AnyHashable: Any]! {
-        NSLog("[DigiaWEBridge] notificationPrepared called keys=\(inAppNotificationData?.keys.sorted() ?? [])")
-
         guard let raw = inAppNotificationData else {
-            logWarning("in-app prepared with nil data; skipping")
+            log.w("Notification prepared with nil data — skipping")
             return inAppNotificationData
         }
 
         // ── Step 1: Is this campaign ours? (mirrors Flutter isDigiaCampaign) ────
         if !WebEngagePayloadMapper.isDigiaCampaign(raw) {
-            logDebug("inapp_prepared non-Digia campaign, allowing normal rendering")
+            log.d("Non-Digia campaign — allowing normal WebEngage rendering")
             return inAppNotificationData
         }
 
@@ -263,7 +258,7 @@ extension WebEngageSdkBridge: WEGInAppNotificationProtocol {
             payload["experimentId"] = experimentId
         }
 
-        logDebug("inapp_prepared exp=\(experimentId) isDigia=true suppress=true")
+        log.d("Digia campaign suppressed for rendering (experimentId=\(experimentId))")
 
         // ── Step 4: Claimed, but not mappable → let go of everything ────────────
         // `isDigiaCampaign` is deliberately wider than the mapper: a
@@ -276,9 +271,9 @@ extension WebEngageSdkBridge: WEGInAppNotificationProtocol {
         // for the rest of the session. Abstaining from both is the whole of the
         // release path: unlike Android, iOS hands back no in-app queue handle.
         guard WebEngagePayloadMapper.resolveConfig(raw) != nil else {
-            logWarning(
-                "inapp_prepared exp=\(experimentId) — a digia-config block with no campaign key. "
-                    + "Suppressed and dropped, holding neither the gate nor the cache. Add a "
+            log.w(
+                "Suppressed and dropped — digia-config block with no campaign key (experimentId=\(experimentId)). "
+                    + "Holding neither the gate nor the cache. Add a "
                     + "<meta name=\"campaign-key\" content=\"…\"> to the block."
             )
             return inAppNotificationData
@@ -298,7 +293,7 @@ extension WebEngageSdkBridge: WEGInAppNotificationProtocol {
         // ── Step 6: Gate check — block duplicate fires for the same campaign ───
         if !experimentId.isEmpty {
             if activeExperimentIds.contains(experimentId) {
-                logDebug("inapp_prepared duplicate blocked exp=\(experimentId)")
+                log.d("Duplicate delivery blocked (experimentId=\(experimentId))")
                 return inAppNotificationData
             }
             activeExperimentIds.insert(experimentId)
@@ -315,14 +310,14 @@ extension WebEngageSdkBridge: WEGInAppNotificationProtocol {
 
     @objc func notificationShown(_ inAppNotificationData: [String: Any]!) {
         let id = inAppNotificationData?["experimentId"] as? String ?? ""
-        logDebug("inapp_shown exp=\(id)")
+        log.d("WebEngage in-app shown (experimentId=\(id))")
     }
 
     @objc func notificationDismissed(_ inAppNotificationData: [String: Any]!) {
         let id = str(inAppNotificationData?["notificationEncId"]
                      ?? inAppNotificationData?["experimentId"]
                      ?? inAppNotificationData?["experiment_id"]) ?? ""
-        logDebug("inapp_dismissed exp=\(id)")
+        log.d("WebEngage in-app dismissed (experimentId=\(id))")
         if !id.isEmpty {
             // Release the gate so the campaign can show again if re-triggered.
             releaseGate(experimentId: id)
@@ -332,7 +327,7 @@ extension WebEngageSdkBridge: WEGInAppNotificationProtocol {
 
     @objc func notification(_ inAppNotificationData: [String: Any]!, clickedWithAction actionId: String!) {
         let id = inAppNotificationData?["experimentId"] as? String ?? ""
-        logDebug("inapp_clicked exp=\(id) actionId=\(actionId ?? "")")
+        log.d("WebEngage in-app clicked (experimentId=\(id), actionId=\(actionId ?? ""))")
     }
 }
 
