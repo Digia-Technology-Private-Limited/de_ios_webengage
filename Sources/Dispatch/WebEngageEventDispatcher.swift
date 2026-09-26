@@ -61,12 +61,10 @@ internal final class WebEngageEventDispatcher {
         let ids = identifiers(for: payload)
 
         if displayed {
+            log.i("CEP close marked (notification_close, experimentId=\(ids.experimentId))", campaign: payload.campaignKey)
             bridge.trackSystemEvent(eventName: "notification_close", systemData: ids.systemData, eventData: [:])
         }
         cache.remove(experimentId: ids.experimentId)
-        let isInline = payload.cepMetadata["propertyId"] != nil
-        let channel = isInline ? "inline" : "in-app"
-        log.i("CEP hold released — \(channel) (experimentId=\(ids.experimentId))", campaign: payload.campaignKey)
     }
 
     // MARK: - Identifiers
