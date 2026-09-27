@@ -126,6 +126,39 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
         log.d("Inline listener skipped — WEPersonalization not linked")
     }
 
+    /// Reads a private WebEngage value only if the target implements the selector.
+    ///
+    /// A miss logs at warning level and skips — private symbols move between
+    /// versions, and an unguarded send crashes the host app (WE-07).
+    /// Internal for tests: linked binaries have every selector, so only a
+    /// direct call against a bare object exercises the miss path.
+    internal func valuePrivate(_ target: AnyObject, _ sel: Selector) -> AnyObject? {
+        guard target.responds(to: sel) else {
+            log.w("Missing WebEngage private API — skipped (selector=\(NSStringFromSelector(sel)))")
+            return nil
+        }
+        typealias ObjectIMP = @convention(c) (AnyObject, Selector) -> Unmanaged<AnyObject>?
+        return unsafeBitCast(target.method(for: sel), to: ObjectIMP.self)(target, sel)?
+            .takeUnretainedValue()
+    }
+
+    /// Fires a private WebEngage method only if the target implements the selector.
+    ///
+    /// Same miss-and-skip guard as [valuePrivate], via a typed IMP (`perform`
+    /// on a `void` method reads back an undefined result). Returns whether the
+    /// call went out, so callers never log a success they did not get.
+    /// Internal for tests, like [valuePrivate].
+    @discardableResult
+    internal func callPrivate(_ target: AnyObject, _ sel: Selector, _ arg1: AnyObject, _ arg2: AnyObject) -> Bool {
+        guard target.responds(to: sel) else {
+            log.w("Missing WebEngage private API — skipped (selector=\(NSStringFromSelector(sel)))")
+            return false
+        }
+        typealias VoidIMP = @convention(c) (AnyObject, Selector, AnyObject, AnyObject) -> Void
+        unsafeBitCast(target.method(for: sel), to: VoidIMP.self)(target, sel, arg1, arg2)
+        return true
+    }
+
     func trackSystemEvent(eventName: String, systemData: [String: Any], eventData: [String: Any]) {
         // Build the andValue dict the same way WebEngage fires notification_view
         // internally: put campaign data under "system_data_overrides" so the
@@ -147,27 +180,29 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
         if eventName == "notification_close",
            let expId = systemData["experiment_id"] as? String, !expId.isEmpty {
             if let rendererCls = NSClassFromString("WEGRenderer"),
-               let renderer = (rendererCls as AnyObject).perform(NSSelectorFromString("sharedInstance"))?.takeUnretainedValue(),
-               let closes = renderer.perform(NSSelectorFromString("sessionCloses"))?.takeUnretainedValue() as? NSMutableDictionary {
+               let renderer = valuePrivate(rendererCls as AnyObject, NSSelectorFromString("sharedInstance")),
+               let closes = valuePrivate(renderer, NSSelectorFromString("sessionCloses")) as? NSMutableDictionary {
                 let closeKey = expId + "_close"
                 closes[closeKey] = 1
                 log.d("Marked in sessionCloses (key=\(closeKey))")
+            } else {
+                log.w("Session close not marked — WEGRenderer unavailable (experimentId=\(expId))")
             }
         }
 
-        let analyticsCls: AnyClass? = NSClassFromString("WEGAnalyticsImpl")
-        if let analyticsCls = analyticsCls {
-            let sharedSel = NSSelectorFromString("sharedInstance")
-            let trackSel = NSSelectorFromString("trackSDKEventWithName:andValue:")
-
-            if let analytics = (analyticsCls as AnyObject).perform(sharedSel)?.takeUnretainedValue() {
-                if let result = analytics.perform(trackSel, with: eventName, with: andValue) {
-                    _ = result.takeUnretainedValue()
-                }
+        if let analyticsCls = NSClassFromString("WEGAnalyticsImpl"),
+           let analytics = valuePrivate(analyticsCls as AnyObject, NSSelectorFromString("sharedInstance")) {
+            let fired = callPrivate(
+                analytics,
+                NSSelectorFromString("trackSDKEventWithName:andValue:"),
+                eventName as NSString,
+                andValue as NSDictionary
+            )
+            if fired {
                 log.d("System event fired (name=\(eventName))")
-            } else {
-                log.w("System event failed — analytics not available (name=\(eventName))")
             }
+        } else {
+            log.w("System event failed — analytics not available (name=\(eventName))")
         }
     }
 
