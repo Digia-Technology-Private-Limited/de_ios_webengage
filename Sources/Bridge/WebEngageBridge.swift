@@ -212,7 +212,9 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
 
     func unregisterInAppListener() {
         log.d("In-app listener unregistered")
-        WebEngage.sharedInstance().setValue(nil, forKey: "notificationDelegate")
+        // The WebEngage delegate stays installed for the life of the process:
+        // clearing it ends Digia interception on every re-registration, and
+        // WebEngage then draws Digia campaigns with its own template.
         onPayloadCallback    = nil
         onInvalidateCallback = nil
         activeExperimentIds.removeAll()
