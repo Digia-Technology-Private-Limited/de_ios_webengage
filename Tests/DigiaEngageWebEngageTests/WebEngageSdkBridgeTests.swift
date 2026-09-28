@@ -134,7 +134,7 @@ struct WebEngageSdkBridgeTests {
 
     @Test("a missing private selector is skipped, not raised")
     func missingPrivateSelectorSkips() {
-        // WE-07: a WebEngage upgrade that renames a private symbol must not
+        // A WebEngage upgrade that renames a private symbol must not
         // crash the host app. A bare NSObject implements nothing here.
         let bridge = makeBridge()
         let target = NSObject()

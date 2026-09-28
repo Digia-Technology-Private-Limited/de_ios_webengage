@@ -129,7 +129,7 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
     /// Reads a private WebEngage value only if the target implements the selector.
     ///
     /// A miss logs at warning level and skips — private symbols move between
-    /// versions, and an unguarded send crashes the host app (WE-07).
+    /// versions, and an unguarded send crashes the host app.
     /// Internal for tests: linked binaries have every selector, so only a
     /// direct call against a bare object exercises the miss path.
     internal func valuePrivate(_ target: AnyObject, _ sel: Selector) -> AnyObject? {
