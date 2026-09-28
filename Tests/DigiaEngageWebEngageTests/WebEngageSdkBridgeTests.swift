@@ -54,9 +54,7 @@ struct WebEngageSdkBridgeTests {
 
     @Test("unregister then register again keeps interception working")
     func reregisterKeepsInterception() {
-        // A second Digia.register (or an RN JS reload) must not end
-        // interception: the WebEngage delegate stays installed, so a prepared
-        // payload still reaches the new listener.
+        // A second register must not end interception.
         let bridge = makeBridge()
         var first: [String] = []
         bridge.registerInAppListener(
