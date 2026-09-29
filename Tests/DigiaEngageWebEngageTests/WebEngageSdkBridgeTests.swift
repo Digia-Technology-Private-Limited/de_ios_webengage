@@ -52,6 +52,28 @@ struct WebEngageSdkBridgeTests {
         #expect(received == ["exp_early"], "an app-launch campaign must survive the registration gap")
     }
 
+    @Test("unregister then register again keeps interception working")
+    func reregisterKeepsInterception() {
+        // A second register must not end interception.
+        let bridge = makeBridge()
+        var first: [String] = []
+        bridge.registerInAppListener(
+            onPayload: { first.append($0["experimentId"] as? String ?? "") },
+            onInvalidate: { _ in }
+        )
+        bridge.unregisterInAppListener()
+
+        var second: [String] = []
+        bridge.registerInAppListener(
+            onPayload: { second.append($0["experimentId"] as? String ?? "") },
+            onInvalidate: { _ in }
+        )
+        prepare(bridge, experimentId: "exp_1")
+
+        #expect(first.isEmpty)
+        #expect(second == ["exp_1"])
+    }
+
     @Test("the buffer is bounded, and evicting releases the gate it drops")
     func bufferIsBounded() {
         let bridge = makeBridge()
