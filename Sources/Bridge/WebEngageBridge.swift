@@ -287,10 +287,14 @@ extension WebEngageSdkBridge: WEGInAppNotificationProtocol {
         if let onPayloadCallback {
             onPayloadCallback(payload)
         } else {
+            let campaignKey = WebEngagePayloadMapper.resolveConfig(payload)?.campaignKey
             log.w(
                 "No Digia plugin registered when experimentId=\(experimentId) prepared — "
                     + "dropping as not_ready and releasing gate. "
-                    + "Call Digia.register(DigiaWebEngagePlugin()) during startup."
+                    + "Call Digia.register(DigiaWebEngagePlugin()) during startup.",
+                campaign: campaignKey,
+                stage: .trigger,
+                reason: DropReason.notReady
             )
             if !experimentId.isEmpty {
                 dataCache.remove(experimentId: experimentId)
