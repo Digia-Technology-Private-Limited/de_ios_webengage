@@ -27,8 +27,6 @@ Carthage/Build/
 # SPM
 Package.resolved
 
-# Frameworks
-Frameworks/WEPersonalization.xcframework/
 
 # User-specific
 *.moved-aside

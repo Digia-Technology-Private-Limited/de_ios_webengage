@@ -10,9 +10,9 @@ import PackageDescription
 // │        from: "1.0.0"                                                        │
 // │    )                                                                        │
 // │                                                                             │
-// │  ⚠️  VENDORED – WebEngage ships INSIDE this package (Frameworks/WebEngage   │
-// │  .xcframework). Do NOT also add WebEngage separately (CocoaPods or SPM) —   │
-// │  that duplicates the framework's symbols in the host binary and the linker  │
+// │  ⚠️  WebEngage 7.1.0 comes in through this package (WebEngage's own CDN     │
+// │  binary). Do NOT also add WebEngage separately (CocoaPods or SPM) — that    │
+// │  duplicates the framework's symbols in the host binary and the linker       │
 // │  fails. This package is the only place WebEngage should be declared.        │
 // └─────────────────────────────────────────────────────────────────────────────┘
 
@@ -41,10 +41,12 @@ let package = Package(
         .package(path: "../core"),
     ],
     targets: [
-        // WebEngage is CocoaPods-only — bundle the xcframework locally so SPM can resolve the import.
+        // WebEngage 7.1.0, the binary WebEngage's own webengage-ios-sdk package points at. No
+        // tag of that package carries 7.1.0 yet (2.0.4 is 7.0.4), so the pin is the URL.
         .binaryTarget(
             name: "WebEngage",
-            path: "Frameworks/WebEngage.xcframework"
+            url: "https://we-sdk.webengage.com/ios/WebEngageCore/7.1.0/WebEngageCore.zip",
+            checksum: "9b4bbc75e12fba962710363b3a45abe17e2a6493a2302ea5c2a336579885544d"
         ),
         .target(
             name: "DigiaEngageWebEngage",

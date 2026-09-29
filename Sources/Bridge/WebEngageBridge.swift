@@ -96,8 +96,8 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
     func registerInlineListener(
         onInlineCampaign: @escaping (String, String, [String: Any], [String: Any]) -> Void
     ) {
-        // WEPersonalization not available — inline campaigns are unsupported.
-        log.d("Inline listener skipped — WEPersonalization not linked")
+        // App In-line is unsupported: no inline listener is ever registered.
+        log.d("Inline listener skipped — App In-line is unsupported")
     }
 
     /// Reads a private WebEngage value only if the target implements the selector.
@@ -201,9 +201,9 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
     }
 
     func unregisterInlineListener() {
-        // WEPersonalization not available — no-op.
+        // App In-line is unsupported — no-op.
         onInlineCampaignCallback = nil
-        log.d("Inline listener unregister skipped — WEPersonalization not linked")
+        log.d("Inline listener unregister skipped — App In-line is unsupported")
     }
 
     func isAvailable() -> Bool { true }
