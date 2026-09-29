@@ -295,4 +295,30 @@ struct WebEngagePayloadMapperTests {
                 campaignId: "camp_1", targetViewId: "home_banner",
                 customData: ["title": "50% off"]) == nil)
     }
+
+    // MARK: - Bad payloads (de_workspace#20)
+
+    @Test("case 1 — no Digia key maps to nothing on either path")
+    func badPayloadCaseOne() {
+        let data: [String: Any] = ["experimentId": "~1", "hostKey": "keep"]
+        #expect(!WebEngagePayloadMapper.isDigiaCampaign(data))
+        #expect(mapper.map(data) == nil)
+        #expect(mapper.mapBadValue(data) == nil)
+    }
+
+    @Test("case 2 — a bad Digia value is claimed and rides the normal path under its raw value")
+    func badPayloadCaseTwo() {
+        #expect(WebEngagePayloadMapper.isDigiaCampaign(["digiaKey": "   "]))
+        let blank = mapper.mapBadValue(["experimentId": "~1", "digiaKey": "   "])
+        #expect(blank?.campaignKey == "")
+        #expect(blank?.cepCampaignId == "~1")
+        #expect(mapper.mapBadValue(["experimentId": "~1", "digiaKey": 42])?.campaignKey == "42")
+    }
+
+    @Test("case 3 — a valid key is never treated as bad")
+    func badPayloadCaseThree() {
+        let data: [String: Any] = ["experimentId": "~1", "digiaKey": "welcome_nudge"]
+        #expect(mapper.map(data)?.campaignKey == "welcome_nudge")
+        #expect(mapper.mapBadValue(data) == nil)
+    }
 }

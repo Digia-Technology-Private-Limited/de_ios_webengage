@@ -174,7 +174,7 @@ public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
     // MARK: - Private dispatch
 
     private func dispatchMappedPayload(_ rawPayload: [String: Any]) {
-        guard let payload = mapper.map(rawPayload) else { return }
+        guard let payload = mapper.map(rawPayload) ?? mapper.mapBadValue(rawPayload) else { return }
         deliver(payload)
     }
 

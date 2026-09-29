@@ -251,7 +251,8 @@ extension WebEngageSdkBridge: WEGInAppNotificationProtocol {
         // never delivered, so the gate would stay set and silence that experiment
         // for the rest of the session. Abstaining from both is the whole of the
         // release path: unlike Android, iOS hands back no in-app queue handle.
-        guard WebEngagePayloadMapper.resolveConfig(raw) != nil else {
+        guard WebEngagePayloadMapper.resolveConfig(raw) != nil
+            || WebEngagePayloadMapper.badTopLevelCampaignKey(in: raw) != nil else {
             log.w(
                 "Suppressed and dropped — digia-config block with no campaign key (experimentId=\(experimentId)). "
                     + "Holding neither the gate nor the cache. Add a "
