@@ -131,4 +131,25 @@ struct WebEngageSdkBridgeTests {
         prepare(bridge, experimentId: "exp_1")
         #expect(received == ["exp_1"], "the gate was never taken: the same experiment can come back")
     }
+
+    @Test("a missing private selector is skipped, not raised")
+    func missingPrivateSelectorSkips() {
+        // A WebEngage upgrade that renames a private symbol must not
+        // crash the host app. A bare NSObject implements nothing here.
+        let bridge = makeBridge()
+        let target = NSObject()
+        let missing = NSSelectorFromString("trackSDKEventWithName:andValue:")
+
+        #expect(bridge.valuePrivate(target, missing) == nil)
+        #expect(bridge.callPrivate(target, missing, "x" as NSString, [:] as NSDictionary) == false)
+    }
+
+    @Test("a present selector still goes through")
+    func presentSelectorStillCalls() {
+        let bridge = makeBridge()
+        let target = NSObject()
+
+        let value = bridge.valuePrivate(target, NSSelectorFromString("description"))
+        #expect((value as? String)?.isEmpty == false)
+    }
 }
