@@ -38,25 +38,41 @@ internal final class WebEngagePayloadMapper {
             return nil
         }
 
+        return trigger(data, campaignKey: config.campaignKey, variables: config.variables)
+    }
+
+    /// Builds a trigger for a payload that names a Digia key but holds no usable value. It
+    /// rides the normal deliver path; core drops it as unknown, which writes the health event.
+    func mapBadValue(_ data: [String: Any]) -> CEPTriggerPayload? {
+        guard let raw = Self.badTopLevelCampaignKey(in: data) else { return nil }
+        log.w("In-app payload has a bad campaign key (value=\(raw))")
+        return trigger(data, campaignKey: raw, variables: nil)
+    }
+
+    private func trigger(
+        _ data: [String: Any],
+        campaignKey: String,
+        variables: [String: String]?
+    ) -> CEPTriggerPayload {
         // WebEngage names an in-app campaign by experiment; the campaign key is the fallback
         // so a payload that reached us without one still gets a stable identity rather than
         // being dropped.
         let experimentId = Self.stringValue(data["experimentId"] ?? data["id"] ?? data["campaignId"])
-            ?? config.campaignKey
+            ?? campaignKey
 
         // Carried on the trigger so every WebEngage call site derives its ids from one place.
         let variationId = Self.stringValue(data["variationId"]) ?? experimentId
 
-        log.d("In-app payload mapped (campaignKey=\(config.campaignKey), experimentId=\(experimentId))", campaign: config.campaignKey)
+        log.d("In-app payload mapped (campaignKey=\(campaignKey), experimentId=\(experimentId))", campaign: campaignKey)
         return CEPTriggerPayload(
             cepCampaignId: experimentId,
-            campaignKey: config.campaignKey,
+            campaignKey: campaignKey,
             cepMetadata: [
                 "experimentId": experimentId,
                 "campaignId": experimentId,
                 "variationId": variationId,
             ],
-            variables: config.variables
+            variables: variables
         )
     }
 
@@ -142,7 +158,17 @@ internal final class WebEngagePayloadMapper {
     /// produce a presentation to settle, so the bridge must take neither the per-experiment
     /// gate nor the cache entry for it — see `notificationPrepared`.
     internal static func isDigiaCampaign(_ data: [String: Any]) -> Bool {
-        topLevelCampaignKey(in: data) != nil || containsDigiaTemplateBlock(in: data)
+        topLevelCampaignKey(in: data) != nil
+            || badTopLevelCampaignKey(in: data) != nil
+            || containsDigiaTemplateBlock(in: data)
+    }
+
+    /// The raw value of a top-level campaign key that is present but unusable (blank or not a
+    /// string), or nil when the payload has a usable key or none at all.
+    internal static func badTopLevelCampaignKey(in data: [String: Any]) -> String? {
+        guard topLevelCampaignKey(in: data) == nil,
+              let name = campaignKeyNames.first(where: { data[$0] != nil }) else { return nil }
+        return stringValue(data[name]) ?? ""
     }
 
     /// Accepted spellings of the campaign key, in priority order.
