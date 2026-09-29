@@ -12,7 +12,7 @@ import DigiaEngage
 /// WebEngage.sharedInstance().application(
 ///     application,
 ///     didFinishLaunchingWithOptions: launchOptions,
-///     notificationDelegate: WebEngagePlugin.notificationDelegate
+///     notificationDelegate: DigiaWebEngagePlugin.notificationDelegate
 /// )
 /// ```
 /// **Usage (app entry-point):**
@@ -67,7 +67,7 @@ public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
     /// WebEngage.sharedInstance().application(
     ///     application,
     ///     didFinishLaunchingWithOptions: launchOptions,
-    ///     notificationDelegate: WebEngagePlugin.notificationDelegate
+    ///     notificationDelegate: DigiaWebEngagePlugin.notificationDelegate
     /// )
     /// ```
     /// WebEngage keeps only a **weak** reference to this object; the shared
