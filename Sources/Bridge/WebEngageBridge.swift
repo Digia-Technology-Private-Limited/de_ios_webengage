@@ -61,28 +61,6 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
     private var activeExperimentIds: Set<String> = []
     private let log = DigiaLogger("WE")
 
-    /// How long an in-app payload may sit buffered waiting for
-    /// `Digia.register()` before its gate is released and the payload dropped.
-    ///
-    /// Buffering at all is what lets an app-launch campaign survive the gap
-    /// between WebEngage preparing it and Digia being registered — this delegate
-    /// is installed in `AppDelegate`, strictly earlier than any plugin can
-    /// attach. Bounding it is what stops that same gap from silencing the
-    /// campaign for the whole session when registration never happens: the gate
-    /// is set the moment the campaign is suppressed, and an unreleased gate
-    /// means WebEngage never offers that campaign again.
-    ///
-    /// Spec §10.5 G-d: this timer, and only this timer, stays in the plugin.
-    static let attachGrace: TimeInterval = 10
-
-    /// Bound on the pre-attach buffer. Unbounded buffering is the bug, not the
-    /// feature — a session that never registers Digia would otherwise accumulate
-    /// every campaign WebEngage prepared.
-    private static let maxBufferedPayloads = 5
-
-    /// Payloads WebEngage prepared before any plugin attached.
-    private var buffered: [(experimentId: String, payload: [String: Any])] = []
-
     private var onPayloadCallback:      (([String: Any]) -> Void)?
     private var onInvalidateCallback:   ((String) -> Void)?
     private var onInlineCampaignCallback: ((String, String, [String: Any], [String: Any]) -> Void)?
@@ -110,13 +88,9 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
         onInvalidateCallback = onInvalidate
         // NOTE: The delegate binding happens at WebEngage init time in AppDelegate via
         // WebEngagePlugin.makeWebEngageConfig(). Nothing to do here at runtime.
+        // Pre-attach payloads are not buffered. They drop at once as not_ready
+        // with the gate freed, per de_workspace#42.
         log.d("In-app listener registered")
-
-        guard !buffered.isEmpty else { return }
-        let pending = buffered
-        buffered = []
-        log.d("Flushing \(pending.count) in-app payload(s) buffered before attach")
-        pending.forEach { onPayload($0.payload) }
     }
 
     func registerInlineListener(
@@ -216,35 +190,6 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
         log.d("Gate released (experimentId=\(experimentId))")
     }
 
-    // MARK: - Pre-attach buffer
-
-    /// Holds a payload that arrived before any plugin attached, under a bounded
-    /// grace period. Always ends with the campaign either delivered or its gate
-    /// released — never silently held.
-    private func bufferUntilAttach(experimentId: String, payload: [String: Any]) {
-        if buffered.count >= Self.maxBufferedPayloads {
-            let evicted = buffered.removeFirst()
-            log.w("Pre-attach buffer full — dropping (experimentId=\(evicted.experimentId)) and releasing gate")
-            releaseGate(experimentId: evicted.experimentId)
-        }
-        buffered.append((experimentId: experimentId, payload: payload))
-        log.d("No plugin attached yet — buffering (experimentId=\(experimentId))")
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.attachGrace) { [weak self] in
-            self?.expireBuffered(experimentId: experimentId)
-        }
-    }
-
-    private func expireBuffered(experimentId: String) {
-        guard let index = buffered.firstIndex(where: { $0.experimentId == experimentId }) else { return }
-        buffered.remove(at: index)
-        log.w(
-            "No Digia plugin registered within \(Self.attachGrace)s of experimentId=\(experimentId) — "
-                + "releasing the WebEngage gate. Call Digia.register(DigiaWebEngagePlugin()) during startup."
-        )
-        releaseGate(experimentId: experimentId)
-    }
-
     func unregisterInAppListener() {
         log.d("In-app listener unregistered")
         // The WebEngage delegate stays installed for the life of the process:
@@ -253,7 +198,6 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
         onPayloadCallback    = nil
         onInvalidateCallback = nil
         activeExperimentIds.removeAll()
-        buffered.removeAll()
     }
 
     func unregisterInlineListener() {
@@ -336,11 +280,26 @@ extension WebEngageSdkBridge: WEGInAppNotificationProtocol {
             activeExperimentIds.insert(experimentId)
         }
 
-        // ── Step 7: Forward to plugin, or buffer under the grace period ────────
+        // ── Step 7: Forward to plugin, or drop at once ─────────────────────────
+        // Suppression already applied above, so WebEngage renders nothing.
+        // With no plugin attached there is no presentation to settle, so free
+        // the gate and the cache here. Never report notification_close.
         if let onPayloadCallback {
             onPayloadCallback(payload)
         } else {
-            bufferUntilAttach(experimentId: experimentId, payload: payload)
+            let campaignKey = WebEngagePayloadMapper.resolveConfig(payload)?.campaignKey
+            log.w(
+                "No Digia plugin registered when experimentId=\(experimentId) prepared — "
+                    + "dropping as not_ready and releasing gate. "
+                    + "Call Digia.register(DigiaWebEngagePlugin()) during startup.",
+                campaign: campaignKey,
+                stage: .trigger,
+                reason: DropReason.notReady
+            )
+            if !experimentId.isEmpty {
+                dataCache.remove(experimentId: experimentId)
+                releaseGate(experimentId: experimentId)
+            }
         }
         return inAppNotificationData
     }

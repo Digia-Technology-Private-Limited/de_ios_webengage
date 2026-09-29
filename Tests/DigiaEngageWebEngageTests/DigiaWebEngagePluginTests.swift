@@ -170,9 +170,9 @@ struct DigiaWebEngagePluginTests {
     func payloadWithoutHost() {
         let h = Harness(attach: false)
 
-        // Nothing is registered, so nothing reaches the plugin at all — the
-        // buffering that keeps this campaign alive lives in the bridge, and is
-        // covered by WebEngageSdkBridgeTests.
+        // Nothing is registered, so nothing reaches the plugin at all — a
+        // pre-attach payload drops at once in the bridge, and is covered by
+        // WebEngageSdkBridgeTests.
         h.bridge.emitPrepared(inAppPayload())
 
         #expect(h.host.delivered.isEmpty)

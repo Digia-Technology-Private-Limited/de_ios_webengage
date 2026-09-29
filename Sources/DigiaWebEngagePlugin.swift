@@ -217,11 +217,20 @@ public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
     /// analytic and the gate ride `outcome`, and nothing rides `holdReleased` —
     /// see the type doc.
     private func deliver(_ trigger: CEPTriggerPayload) {
+        let experimentId = trigger.cepMetadata["experimentId"] ?? trigger.cepCampaignId
         guard let host else {
-            log.w("Payload dropped — host unavailable (payloadId=\(trigger.cepCampaignId))", campaign: trigger.campaignKey)
+            log.w(
+                "Payload dropped — host unavailable (payloadId=\(trigger.cepCampaignId), reason=not_ready)",
+                campaign: trigger.campaignKey,
+                stage: .trigger,
+                reason: DropReason.notReady
+            )
+            if !experimentId.isEmpty {
+                cache.remove(experimentId: experimentId)
+                bridge.releaseGate(experimentId: experimentId)
+            }
             return
         }
-        let experimentId = trigger.cepMetadata["experimentId"] ?? trigger.cepCampaignId
         let isInline = trigger.cepMetadata["propertyId"] != nil
         let channel = isInline ? "inline" : "in-app"
         log.i("Received — \(channel) (experimentId=\(experimentId))", campaign: trigger.campaignKey)
