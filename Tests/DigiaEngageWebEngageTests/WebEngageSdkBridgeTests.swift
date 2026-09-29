@@ -2,19 +2,17 @@
 import Foundation
 import Testing
 
-/// The pre-attach buffer.
+/// The pre-attach drop.
 ///
 /// This delegate is installed in `AppDelegate`, strictly earlier than any plugin
 /// can attach, so WebEngage can prepare a campaign while `Digia.initialize()` is
-/// still in flight. Suppressing that campaign sets its gate; if the payload is
-/// simply dropped, the gate is never cleared and WebEngage will not offer the
-/// campaign again for the rest of the session. Buffering preserves the
-/// app-launch campaign; bounding the buffer is what stops a misconfigured app
-/// from accumulating every campaign it ever suppressed.
+/// still in flight. That campaign is suppressed — WebEngage renders nothing —
+/// then dropped at once as not_ready, with its gate and cache freed so nothing
+/// is silenced for the session. No wait, no grey modal, no close reported.
 ///
-/// Only the buffer is exercised here — every method involved is pure plugin
+/// Only the drop is exercised here — every method involved is pure plugin
 /// state, so no WebEngage instance is needed.
-@Suite("WebEngageSdkBridge — pre-attach buffer", .serialized)
+@Suite("WebEngageSdkBridge — pre-attach drop", .serialized)
 struct WebEngageSdkBridgeTests {
 
     private func makeBridge() -> WebEngageSdkBridge {
@@ -38,10 +36,12 @@ struct WebEngageSdkBridgeTests {
         return stop.boolValue
     }
 
-    @Test("a payload prepared before attach is flushed when the plugin attaches")
-    func flushesOnAttach() {
+    @Test("a payload prepared before attach is suppressed and dropped at once")
+    func dropsBeforeAttach() {
         let bridge = makeBridge()
-        prepare(bridge, experimentId: "exp_early")
+        let suppressed = prepare(bridge, experimentId: "exp_early")
+
+        #expect(suppressed, "WebEngage must not render under a Digia claim, even with no plugin attached")
 
         var received: [String] = []
         bridge.registerInAppListener(
@@ -49,7 +49,11 @@ struct WebEngageSdkBridgeTests {
             onInvalidate: { _ in }
         )
 
-        #expect(received == ["exp_early"], "an app-launch campaign must survive the registration gap")
+        #expect(received.isEmpty, "no wait, no flush — the pre-attach payload is gone")
+
+        // The drop freed the gate, so the campaign can come back.
+        prepare(bridge, experimentId: "exp_early")
+        #expect(received == ["exp_early"])
     }
 
     @Test("unregister then register again keeps interception working")
@@ -74,11 +78,13 @@ struct WebEngageSdkBridgeTests {
         #expect(second == ["exp_1"])
     }
 
-    @Test("the buffer is bounded, and evicting releases the gate it drops")
-    func bufferIsBounded() {
+    @Test("every pre-attach drop frees its gate, so nothing is silenced for the session")
+    func preAttachDropsFreeGates() {
         let bridge = makeBridge()
-        // One more than the cap, so the oldest is evicted.
-        for index in 1...6 { prepare(bridge, experimentId: "exp_\(index)") }
+        for index in 1...6 {
+            let suppressed = prepare(bridge, experimentId: "exp_\(index)")
+            #expect(suppressed)
+        }
 
         var received: [String] = []
         bridge.registerInAppListener(
@@ -86,12 +92,10 @@ struct WebEngageSdkBridgeTests {
             onInvalidate: { _ in }
         )
 
-        #expect(received == ["exp_2", "exp_3", "exp_4", "exp_5", "exp_6"], "bounded at 5, oldest first out")
+        #expect(received.isEmpty, "nothing was buffered, so nothing flushes")
 
-        // The evicted one released its gate, so WebEngage can offer it again —
-        // losing the campaign is survivable, silencing it for the session is not.
         prepare(bridge, experimentId: "exp_1")
-        #expect(received.last == "exp_1")
+        #expect(received == ["exp_1"], "the drop freed the gate: the same experiment can come back")
     }
 
     @Test("a duplicate preparation for a live experiment is blocked")
