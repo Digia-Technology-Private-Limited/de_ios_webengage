@@ -21,7 +21,7 @@ Pod::Spec.new do |s|
   # version Package.swift and the Flutter plugin use, so every stack runs one WebEngage.
   s.dependency 'WebEngage', '7.1.0'
 
-  # A range, never an exact pin: CocoaPods has to satisfy every podspec in the
+  # DigiaEngage takes a range, not an exact pin: CocoaPods has to satisfy every podspec in the
   # host app's graph at once, and two exact pins on the same pod deadlock
   # resolution outright — the clevertap_plugin 3.8.1 failure mode.
   s.dependency 'DigiaEngage', '~> 3.14'
