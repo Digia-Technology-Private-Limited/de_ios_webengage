@@ -49,7 +49,18 @@ This package depends on the core Digia Engage SDK (`DigiaEngage`) which is decla
 
 ## Usage
 
-Register the plugin with DigiaEngage (example):
+Pass the plugin's delegate to WebEngage when you initialize WebEngage in your `AppDelegate`.
+Without it, WebEngage renders Digia campaigns itself:
+
+```swift
+WebEngage.sharedInstance().application(
+    application,
+    didFinishLaunchingWithOptions: launchOptions,
+    notificationDelegate: DigiaWebEngagePlugin.notificationDelegate
+)
+```
+
+Then register the plugin with DigiaEngage (example):
 
 ```swift
 import DigiaEngage

@@ -44,15 +44,14 @@ internal protocol WebEngageBridgeProtocol: AnyObject {
 ///
 /// WebEngage iOS accepts one `WEGInAppNotificationProtocol` delegate at a time.
 /// This bridge must be registered as `notificationDelegate` **at WebEngage SDK
-/// initialization time** in your `AppDelegate`. Use `WebEngagePlugin.makeWebEngageConfig()`
-/// to get a `WebEngageConfig` with the bridge pre-wired, then pass it to:
-/// `WebEngage.sharedInstance().application(_:didFinishLaunchingWithOptions:webengageConfig:)`
+/// initialization time** in your `AppDelegate`: pass `DigiaWebEngagePlugin.notificationDelegate`
+/// to `WebEngage.sharedInstance().application(_:didFinishLaunchingWithOptions:notificationDelegate:)`.
 internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unchecked Sendable {
 
-    // Singleton used for AppDelegate registration (see WebEngagePlugin.makeWebEngageConfig()).
+    // Singleton used for AppDelegate registration (see DigiaWebEngagePlugin.notificationDelegate).
     nonisolated(unsafe) internal static let shared = WebEngageSdkBridge()
 
-    // `var` so that WebEngagePlugin.init(config:) can apply a custom config after the
+    // `var` so that DigiaWebEngagePlugin.init(config:) can apply a custom config after the
     // singleton is created with default settings.
     internal var config: WebEngagePluginConfig
     private let dataCache: InAppDataCache
@@ -87,7 +86,7 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
         onPayloadCallback    = onPayload
         onInvalidateCallback = onInvalidate
         // NOTE: The delegate binding happens at WebEngage init time in AppDelegate via
-        // WebEngagePlugin.makeWebEngageConfig(). Nothing to do here at runtime.
+        // DigiaWebEngagePlugin.notificationDelegate. Nothing to do here at runtime.
         // Pre-attach payloads are not buffered. They drop at once as not_ready
         // with the gate freed, per de_workspace#42.
         log.d("In-app listener registered")
