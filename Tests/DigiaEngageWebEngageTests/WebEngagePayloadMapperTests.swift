@@ -251,7 +251,7 @@ struct WebEngagePayloadMapperTests {
         #expect(payload?.variables == ["count": "1", "name": "Priya"])
     }
 
-    // MARK: - Inline (WEPersonalization)
+    // MARK: - Inline
 
     @Test("an inline campaign is identified by campaign and property together")
     func inlineIdentity() {

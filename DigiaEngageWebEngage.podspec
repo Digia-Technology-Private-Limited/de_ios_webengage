@@ -16,22 +16,12 @@ Pod::Spec.new do |s|
   s.swift_version    = '6.0'
   s.source_files     = 'Sources/**/*.swift'
 
-  # WebEngage is a DEPENDENCY here, not vendored — deliberately unlike Package.swift.
-  #
-  # Package.swift bundles Frameworks/WebEngage.xcframework as a .binaryTarget because
-  # WebEngage ships CocoaPods-only and SPM has no other way to resolve the import. That
-  # reasoning does not carry over to CocoaPods, where the pod exists: vendoring a second
-  # copy collides with the one every real WebEngage app already has, and `pod install`
-  # fails outright —
-  #
-  #     The 'Pods-<App>' target has frameworks with conflicting names: webengage.xcframework
-  #
-  # react-native-webengage declares `'WebEngage', '>= 6.16.1'`, so that is the floor here.
-  # Range, never an exact pin: the host app and its RN wrapper must be able to agree on one
-  # version with us.
-  s.dependency 'WebEngage', '>= 6.16.1'
+  # WebEngage is a DEPENDENCY here, never vendored: a second copy collides with the one
+  # every real WebEngage app already has, and `pod install` fails. Pinned to 7.1.0, the
+  # version Package.swift and the Flutter plugin use, so every stack runs one WebEngage.
+  s.dependency 'WebEngage', '7.1.0'
 
-  # A range, never an exact pin: CocoaPods has to satisfy every podspec in the
+  # DigiaEngage takes a range, not an exact pin: CocoaPods has to satisfy every podspec in the
   # host app's graph at once, and two exact pins on the same pod deadlock
   # resolution outright — the clevertap_plugin 3.8.1 failure mode.
   s.dependency 'DigiaEngage', '~> 3.14'

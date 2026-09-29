@@ -1,7 +1,7 @@
 import Foundation
 import DigiaEngage
 
-/// Maps raw WebEngage in-app / personalization payloads into `CEPTriggerPayload` values.
+/// Maps raw WebEngage in-app and inline payloads into `CEPTriggerPayload` values.
 ///
 /// One thing couples a WebEngage campaign to a Digia one: the campaign key. It is resolved in
 /// this order, and nothing else is a campaign key — not WebEngage's own experiment id, not a
@@ -76,9 +76,9 @@ internal final class WebEngagePayloadMapper {
         )
     }
 
-    // MARK: - Inline (WEPersonalization)
+    // MARK: - Inline
 
-    /// Maps a WEPersonalization inline campaign to a `CEPTriggerPayload`.
+    /// Maps a WebEngage inline campaign to a `CEPTriggerPayload`.
     ///
     /// One WebEngage campaign can be served into several properties, so the identity is the
     /// pair — two slots showing the same campaign are two presentations.

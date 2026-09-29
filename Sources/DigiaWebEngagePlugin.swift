@@ -2,7 +2,7 @@ import Foundation
 import DigiaEngage
 @preconcurrency import WebEngage
 
-/// Top-level plugin that wires WebEngage in-app and personalization callbacks into Digia's
+/// Top-level plugin that wires WebEngage in-app callbacks into Digia's
 /// CEP rendering engine on iOS.  Drop-in equivalent of `WebEngagePlugin.kt` on Android.
 ///
 /// **Usage (AppDelegate):**
