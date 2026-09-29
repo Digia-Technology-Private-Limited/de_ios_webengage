@@ -149,20 +149,6 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
 
         // Use trackSDKEventWithName:andValue: which bypasses reserved-name
         // guards and routes through the full SDK event pipeline.
-        // Mark sessionCloses BEFORE firing the event so re-evaluation
-        // triggered by the event already sees the mark.
-        if eventName == "notification_close",
-           let expId = systemData["experiment_id"] as? String, !expId.isEmpty {
-            if let rendererCls = NSClassFromString("WEGRenderer"),
-               let renderer = valuePrivate(rendererCls as AnyObject, NSSelectorFromString("sharedInstance")),
-               let closes = valuePrivate(renderer, NSSelectorFromString("sessionCloses")) as? NSMutableDictionary {
-                let closeKey = expId + "_close"
-                closes[closeKey] = 1
-                log.d("Marked in sessionCloses (key=\(closeKey))")
-            } else {
-                log.w("Session close not marked — WEGRenderer unavailable (experimentId=\(expId))")
-            }
-        }
 
         if let analyticsCls = NSClassFromString("WEGAnalyticsImpl"),
            let analytics = valuePrivate(analyticsCls as AnyObject, NSSelectorFromString("sharedInstance")) {
