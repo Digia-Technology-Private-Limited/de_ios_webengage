@@ -64,6 +64,25 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
     private var onInvalidateCallback:   ((String) -> Void)?
     private var onInlineCampaignCallback: ((String, String, [String: Any], [String: Any]) -> Void)?
 
+    // Screen hold (WE-14). Main thread only.
+    private var pendingScreens: [String] = []
+    private var screenHoldActive = false
+    private var awaitingRenderSettle = false
+    private var settleGeneration = 0
+    private var lastPreparedId: String?
+
+    // Seams for tests. Defaults run on the main queue and call WebEngage.
+    internal var schedule: (TimeInterval, @escaping () -> Void) -> Void = { delay, work in
+        nonisolated(unsafe) let work = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { work() }
+    }
+    internal var forwardScreen: (String) -> Void = { name in
+        WebEngage.sharedInstance().analytics.navigatingToScreen(withName: name)
+    }
+    internal lazy var renderingNotificationId: () -> String? = { [unowned self] in
+        self.readRenderingNotificationId()
+    }
+
     private override init() {
         self.config = WebEngagePluginConfig()
         self.dataCache = InAppDataCache()
@@ -113,6 +132,16 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
         typealias ObjectIMP = @convention(c) (AnyObject, Selector) -> Unmanaged<AnyObject>?
         return unsafeBitCast(target.method(for: sel), to: ObjectIMP.self)(target, sel)?
             .takeUnretainedValue()
+    }
+
+    /// Reads a private WebEngage `BOOL` with the same guard as [valuePrivate].
+    internal func boolPrivate(_ target: AnyObject, _ sel: Selector) -> Bool {
+        guard target.responds(to: sel) else {
+            log.w("Missing WebEngage private API — skipped (selector=\(NSStringFromSelector(sel)))")
+            return false
+        }
+        typealias BoolIMP = @convention(c) (AnyObject, Selector) -> ObjCBool
+        return unsafeBitCast(target.method(for: sel), to: BoolIMP.self)(target, sel).boolValue
     }
 
     /// Fires a private WebEngage method only if the target implements the selector.
@@ -165,8 +194,62 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
         }
     }
 
+    /// WebEngage iOS drops an in-flight in-app render on a screen change, so a
+    /// campaign triggered just before navigation is lost. Each screen change waits
+    /// for that render to reach `notificationPrepared`, capped at 1 s, in order.
     func navigateScreen(_ name: String) {
-        WebEngage.sharedInstance().analytics.navigatingToScreen(withName: name)
+        schedule(0) { [self] in
+            pendingScreens.append(name)
+            if !screenHoldActive { holdNextScreen() }
+        }
+    }
+
+    private static let renderStartWindow: TimeInterval = 0.1
+    private static let renderSettleTimeout: TimeInterval = 1.0
+
+    private func holdNextScreen() {
+        guard !pendingScreens.isEmpty else {
+            screenHoldActive = false
+            return
+        }
+        screenHoldActive = true
+        // WebEngage starts a render a few ms after the trigger event.
+        schedule(Self.renderStartWindow) { [self] in
+            guard let current = renderingNotificationId(), current != lastPreparedId else {
+                forwardNextScreen()
+                return
+            }
+            settleGeneration += 1
+            let generation = settleGeneration
+            awaitingRenderSettle = true
+            schedule(Self.renderSettleTimeout) { [self] in
+                guard awaitingRenderSettle, generation == settleGeneration else { return }
+                log.d("Screen hold timed out (notificationId=\(current))")
+                forwardNextScreen()
+            }
+        }
+    }
+
+    private func forwardNextScreen() {
+        awaitingRenderSettle = false
+        forwardScreen(pendingScreens.removeFirst())
+        holdNextScreen()
+    }
+
+    private func renderSettled(_ notificationId: String?) {
+        schedule(0) { [self] in
+            lastPreparedId = notificationId
+            if awaitingRenderSettle { forwardNextScreen() }
+        }
+    }
+
+    /// The id of a render `WEGRenderer` has started, or nil when idle or when a
+    /// private symbol is missing.
+    private func readRenderingNotificationId() -> String? {
+        guard let rendererCls = NSClassFromString("WEGRenderer"),
+              let renderer = valuePrivate(rendererCls as AnyObject, NSSelectorFromString("sharedInstance")),
+              boolPrivate(renderer, NSSelectorFromString("rendering")) else { return nil }
+        return valuePrivate(renderer, NSSelectorFromString("currentNotificationId")) as? String
     }
 
     func releaseGate(experimentId: String) {
@@ -206,6 +289,9 @@ extension WebEngageSdkBridge: WEGInAppNotificationProtocol {
             log.w("Notification prepared with nil data — skipping")
             return inAppNotificationData
         }
+
+        // Every render that reaches this callback frees a held screen change.
+        renderSettled(str(raw["notificationEncId"] ?? raw["experimentId"] ?? raw["experiment_id"]))
 
         // ── Step 1: Is this campaign ours? (mirrors Flutter isDigiaCampaign) ────
         if !WebEngagePayloadMapper.isDigiaCampaign(raw) {
