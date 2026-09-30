@@ -23,6 +23,9 @@ final class FakeWebEngageBridge: WebEngageBridgeProtocol, @unchecked Sendable {
     /// WebEngage's own release call misbehave (scenario C5).
     var onReleaseGate: ((String) -> Void)?
 
+    /// Runs immediately, so no test sleeps for the echo delay.
+    var schedule: (TimeInterval, @escaping () -> Void) -> Void = { _, work in work() }
+
     /// Names only — what a test usually asserts on.
     var eventNames: [String] { events.map(\.name) }
 

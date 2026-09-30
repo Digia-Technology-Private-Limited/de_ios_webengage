@@ -38,7 +38,7 @@ private final class Harness {
 @Suite("DigiaWebEngagePlugin — gate lifecycle", .serialized)
 struct DigiaWebEngagePluginTests {
 
-    // MARK: - The gate: released on both arms, always
+    // MARK: - The gate: released on hold, always
 
     @Test("releases the gate when the experience is dismissed")
     func releasesGateOnDismiss() async {
@@ -63,25 +63,27 @@ struct DigiaWebEngagePluginTests {
         #expect(h.bridge.releasedGates == ["exp_1"], "a drop must free the gate exactly like a dismissal")
     }
 
-    @Test("a synchronous drop releases the gate without waiting for a task")
-    func syncDropReleasesGateInline() {
-        // No `await` anywhere: deliver() returns already settled, so a plugin
-        // that only bound to a task would leave the gate set across a suspension.
+    @Test("a synchronous drop still schedules the gate through the settled hold")
+    func syncDropReleasesGateInline() async {
+        // deliver() returns already settled. The hold observer attaches before
+        // the sync-drop check, so the settled hold still schedules the gate.
         let h = Harness(host: FakeCEPHost(syncDrop: .frequencyCapped))
 
         h.bridge.emitPrepared(inAppPayload())
+        await drainMainActor()
 
         #expect(h.host.delivered.count == 1, "Digia must actually have been asked")
         #expect(h.bridge.releasedGates == ["exp_1"])
     }
 
     @Test("detach releases the gate for a live presentation")
-    func detachReleasesGate() {
+    func detachReleasesGate() async {
         let h = Harness()
         h.bridge.emitPrepared(inAppPayload())
         h.core.markDisplaying()
 
         h.plugin.detach()
+        await drainMainActor()
 
         #expect(h.bridge.releasedGates == ["exp_1"], "unregistering must not silence the campaign for the session")
         #expect(h.core.isSettled)
@@ -89,15 +91,35 @@ struct DigiaWebEngagePluginTests {
     }
 
     @Test("a WebEngage-side dismissal cancels the presentation and releases the gate")
-    func webEngageDismissalCancels() {
+    func webEngageDismissalCancels() async {
         let h = Harness()
         h.bridge.emitPrepared(inAppPayload())
         h.core.markDisplaying()
 
         h.bridge.emitDismissed(experimentId: "exp_1")
+        await drainMainActor()
 
         #expect(h.core.isSettled)
         #expect(h.bridge.releasedGates == ["exp_1"])
+    }
+
+    @Test("hold released while the outcome is unsettled releases the gate, close only at dismiss")
+    func holdReleasedReleasesGateBeforeOutcome() async {
+        let h = Harness()
+        h.bridge.emitPrepared(inAppPayload())
+        h.core.markDisplaying()
+
+        h.core.releaseHold()
+        await drainMainActor()
+
+        #expect(h.bridge.releasedGates == ["exp_1"], "the gate rides holdReleased")
+        #expect(h.bridge.eventsNamed("notification_close").isEmpty, "no close before the outcome")
+
+        h.core.settle(.dismissed(reason: .userClose, completed: false))
+        await drainMainActor()
+
+        #expect(h.bridge.releasedGates == ["exp_1"], "exactly one release")
+        #expect(h.bridge.eventsNamed("notification_close").count == 1, "close still sent only at dismissed outcome")
     }
 
     // MARK: - notification_close: the dismissed arm only

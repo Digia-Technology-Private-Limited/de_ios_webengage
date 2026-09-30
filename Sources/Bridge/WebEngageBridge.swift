@@ -29,8 +29,12 @@ internal protocol WebEngageBridgeProtocol: AnyObject {
     /// The gate is set when a campaign is suppressed for Digia to render, and —
     /// because a suppressed notification never reaches WebEngage's own dismiss
     /// callback — nothing on WebEngage's side ever clears it again. The plugin
-    /// releases it when the presentation's `outcome` settles, on **both** arms.
+    /// releases it when the presentation's `holdReleased` settles, after the
+    /// echo delay. It stays a *de-duplication* gate, not a queue hold.
     func releaseGate(experimentId: String)
+
+    /// Schedules `work` after `delay`. Injectable so tests run immediately.
+    var schedule: (TimeInterval, @escaping () -> Void) -> Void { get set }
 
     func unregisterInAppListener()
     func unregisterInlineListener()
