@@ -41,10 +41,11 @@ private final class Harness {
 /// nothing on WebEngage's side ever clears the mark — only the plugin can, and a
 /// mark left set silences that campaign for the rest of the session.
 ///
-/// The gate binds to `outcome`, not to `holdReleased`, and deliberately so: it
-/// de-duplicates rather than queues, so freeing it while the experience is still
-/// on screen would let WebEngage prepare the same campaign on top of itself.
-/// C7 is where that shows.
+/// The gate rides `holdReleased` after a 1 s echo delay, matching
+/// Flutter/Android — not `outcome`. An inline outcome fires only when its slot
+/// hides, which may be never. It stays a de-duplication gate: the delay stops
+/// WebEngage preparing the same campaign on top of itself. C7 is where that
+/// shows.
 @MainActor
 @Suite("DigiaWebEngagePlugin — CEP conformance (spec §8.3)", .serialized)
 struct WebEngageConformanceTests {
@@ -88,6 +89,7 @@ struct WebEngageConformanceTests {
         // WebEngage invalidated the campaign while Digia was still displaying it
         // — the CEP-initiated termination, which reaches core as `cancel()`.
         h.bridge.emitDismissed(experimentId: "exp_1")
+        await drainMainActor()
 
         #expect(h.bridge.releasedGates == ["exp_1"])
         #expect(h.core.isSettled)
@@ -207,11 +209,9 @@ struct WebEngageConformanceTests {
         h.core.releaseHold()
         await drainMainActor()
 
-        // The gate is a de-dup gate, not a queue hold, so it deliberately does
-        // not move here: freeing it while the experience is still on screen
-        // would let WebEngage prepare the same campaign on top of itself. The
-        // unblock is the one at `outcome`, below.
-        #expect(h.bridge.releasedGates.isEmpty)
+        // The gate rides `holdReleased` after the echo delay (immediate in
+        // tests), so it moves here — an inline outcome may never fire.
+        #expect(h.bridge.releasedGates == ["exp_1"])
 
         h.core.emitClicked(elementId: "primary_cta")
         #expect(
@@ -235,9 +235,10 @@ struct WebEngageConformanceTests {
         let h = Harness(host: FakeCEPHost(syncDrop: .frequencyCapped))
 
         h.bridge.emitPrepared(inAppPayload())
+        await drainMainActor()
 
         #expect(h.host.delivered.count == 1, "Digia must actually have been asked")
-        #expect(h.bridge.releasedGates == ["exp_1"], "released inline, with no turn of the main actor")
+        #expect(h.bridge.releasedGates == ["exp_1"], "the settled hold still schedules the gate")
         #expect(h.core.isHoldReleased, "G8: the hold settled no later than the outcome")
 
         let fired = await awaiterAttachedLateFires(h.core.presentation.holdReleased)

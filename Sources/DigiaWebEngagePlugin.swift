@@ -28,14 +28,14 @@ import DigiaEngage
 /// and WebEngage will not prepare it again. Because a suppressed notification
 /// never reaches WebEngage's own dismiss callback, nothing on WebEngage's side
 /// ever clears that mark — so the plugin must, and it does so 1 s after the
-/// presentation's `outcome` settles, on **both** arms: `notification_close`
-/// makes WebEngage re-prepare the campaign it just closed within milliseconds.
+/// presentation's `holdReleased` settles: `notification_close` makes WebEngage
+/// re-prepare the campaign it just closed within milliseconds.
 ///
-/// The gate is bound to `outcome` rather than to `holdReleased` (spec §7.2
-/// sketches the latter) because it is a *de-duplication* gate, not a queue hold:
-/// releasing it while the experience is still on screen would let WebEngage
-/// prepare the same campaign on top of itself. Nothing here binds to
-/// `holdReleased` — for a modal experience the two settle together anyway.
+/// The gate stays a *de-duplication* gate, not a queue hold: the delay stops
+/// WebEngage preparing the same campaign on top of itself. An inline outcome
+/// fires only when its slot hides, and that may be never — binding to `outcome`
+/// would silence that experiment for the rest of the session. Modals are
+/// unaffected: the two settle together there.
 @MainActor
 public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
 
@@ -215,8 +215,8 @@ public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
     /// Hands a trigger to Digia and binds WebEngage's side to the handle.
     ///
     /// Three bindings, and no fourth: view/click ride `onSignal`, the close
-    /// analytic and the gate ride `outcome`, and nothing rides `holdReleased` —
-    /// see the type doc.
+    /// analytic rides `outcome` via `finish`, and the gate rides `holdReleased`
+    /// via `notifyDismissed` — see the type doc.
     private func deliver(_ trigger: CEPTriggerPayload) {
         let experimentId = trigger.cepMetadata["experimentId"] ?? trigger.cepCampaignId
         guard let host else {
@@ -229,7 +229,7 @@ public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
             )
             if !experimentId.isEmpty {
                 cache.remove(experimentId: experimentId)
-                bridge.releaseGate(experimentId: experimentId)
+                bridge.notifyDismissed(experimentId: experimentId)
             }
             return
         }
@@ -248,16 +248,21 @@ public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
             }
         }
 
-        // A synchronous drop settled before any task could be scheduled. Free
-        // the gate inline rather than across a suspension point.
+        // Gate rides holdReleased; attach before the sync-drop check so settled
+        // holds still free. weak self: a parked task must not retain the plugin.
+        Task { @MainActor [weak self] in
+            _ = await presentation.holdReleased.value
+            self?.bridge.notifyDismissed(experimentId: experimentId)
+        }
+
+        // A synchronous drop settled before any task could be scheduled. Finish
+        // inline rather than across a suspension point; the hold observer above
+        // still schedules the gate.
         if let outcome = presentation.outcome.settledValue {
             finish(experimentId: experimentId, trigger: trigger, displayed: didDisplay(outcome))
             return
         }
 
-        // `weak self`: PresentationPromise deliberately ignores cancellation, so
-        // a task awaiting an outcome core never settles parks forever — it must
-        // not keep the plugin alive.
         Task { @MainActor [weak self] in
             let outcome = await presentation.outcome.value
             self?.finish(experimentId: experimentId, trigger: trigger, displayed: didDisplay(outcome))
@@ -266,13 +271,10 @@ public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
 
     /// The single terminal funnel. Idempotent through `live`, so the outcome
     /// task, a WebEngage-side dismissal and `detach()` may all call it.
-    ///
-    /// Gate frees 1 s after settle, not here: `notification_close` fires first
-    /// and WebEngage re-prepares the closed campaign within milliseconds.
+    /// Markings and cache eviction only — the gate rides `holdReleased`.
     private func finish(experimentId: String, trigger: CEPTriggerPayload, displayed: Bool) {
         guard live.removeValue(forKey: experimentId) != nil else { return }
         dispatcher.experienceEnded(trigger, displayed: displayed)
-        bridge.notifyDismissed(experimentId: experimentId)
     }
 }
 

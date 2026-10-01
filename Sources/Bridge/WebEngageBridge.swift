@@ -33,9 +33,8 @@ internal protocol WebEngageBridgeProtocol: AnyObject {
     /// uses `notifyDismissed` instead.
     func releaseGate(experimentId: String)
 
-    /// Outcome-path gate free, 1 s after settle (see `gateReleaseDelay`).
-    /// Same name and timing as Flutter's `notifyDismissed`; unlike Flutter's,
-    /// this sends no callback — it only frees the gate.
+    /// Gate free, 1 s after the call (see `gateReleaseDelay`).
+    /// Called from the hold observer and drops with no presentation.
     func notifyDismissed(experimentId: String)
 
     func unregisterInAppListener()
@@ -178,22 +177,19 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
         }
 
         // Use trackSDKEventWithName:andValue: which bypasses reserved-name
-        // guards and routes through the full SDK event pipeline. Same
-        // failure line as Flutter: success stays silent on both stacks.
+        // guards and routes through the full SDK event pipeline.
         let experimentId = systemData["experiment_id"] as? String ?? "-"
-        if let analyticsCls = NSClassFromString("WEGAnalyticsImpl"),
-           let analytics = valuePrivate(analyticsCls as AnyObject, NSSelectorFromString("sharedInstance")) {
-            let fired = callPrivate(
-                analytics,
-                NSSelectorFromString("trackSDKEventWithName:andValue:"),
-                eventName as NSString,
-                andValue as NSDictionary
-            )
-            if !fired {
-                log.e("System event failed — continuing (event=\(eventName), experimentId=\(experimentId))")
-            }
-        } else {
+        guard let analyticsCls = NSClassFromString("WEGAnalyticsImpl"),
+              let analytics = valuePrivate(analyticsCls as AnyObject, NSSelectorFromString("sharedInstance")),
+              callPrivate(
+                  analytics,
+                  NSSelectorFromString("trackSDKEventWithName:andValue:"),
+                  eventName as NSString,
+                  andValue as NSDictionary
+              )
+        else {
             log.e("System event failed — continuing (event=\(eventName), experimentId=\(experimentId))")
+            return
         }
     }
 
@@ -210,9 +206,8 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
     private static let renderStartWindow: TimeInterval = 0.1
     private static let renderSettleTimeout: TimeInterval = 1.0
 
-    /// Close-echo window. Same name and value as Flutter's `gateReleaseDelay`:
-    /// the `notification_close` re-evaluation arrives within milliseconds, so
-    /// the gate stays shut for a generous 1 s after the outcome settles.
+    /// Close-echo window: the `notification_close` re-evaluation arrives within
+    /// milliseconds, so the gate stays shut for a generous 1 s.
     private static let gateReleaseDelay: TimeInterval = 1.0
 
     private func holdNextScreen() {
@@ -335,8 +330,7 @@ extension WebEngageSdkBridge: WEGInAppNotificationProtocol {
         // release path: unlike Android, iOS hands back no in-app queue handle.
         guard WebEngagePayloadMapper.resolveConfig(raw) != nil
             || WebEngagePayloadMapper.badTopLevelCampaignKey(in: raw) != nil else {
-            // Silent like Flutter: nothing downstream can settle a presentation
-            // that was never delivered, so this takes neither gate nor cache.
+            // Takes neither gate nor cache: nothing downstream settles it.
             return inAppNotificationData
         }
 
@@ -352,7 +346,7 @@ extension WebEngageSdkBridge: WEGInAppNotificationProtocol {
         }
 
         // ── Step 6: Gate check — block duplicate fires for the same campaign ───
-        // Silent like Flutter's Dart gate: duplicates never reach the plugin.
+        // Duplicates never reach the plugin; stay silent.
         if !experimentId.isEmpty {
             if activeExperimentIds.contains(experimentId) {
                 return inAppNotificationData
