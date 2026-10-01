@@ -129,6 +129,52 @@ struct WebEngageSdkBridgeTests {
         #expect(received == ["exp_1", "exp_1"])
     }
 
+    @Test("a WebEngage-side dismissal frees the gate at once")
+    func webEngageDismissalFreesGateAtOnce() {
+        // No `notification_close` is sent on this path, so there is no echo
+        // to absorb: the free stays immediate.
+        let bridge = makeBridge()
+        var received: [String] = []
+        var invalidated: [String] = []
+        bridge.registerInAppListener(
+            onPayload: { received.append($0["experimentId"] as? String ?? "") },
+            onInvalidate: { invalidated.append($0) }
+        )
+
+        prepare(bridge, experimentId: "exp_1")
+        bridge.notificationDismissed(["experimentId": "exp_1"])
+        prepare(bridge, experimentId: "exp_1")
+
+        #expect(invalidated == ["exp_1"])
+        #expect(received == ["exp_1", "exp_1"])
+    }
+
+    @Test("the gate stays shut through the close-echo window, then reopens")
+    func gateHoldsThroughEchoWindow() {
+        // Device proof: the `notification_close` echo re-prepares the same
+        // experiment within ~330 ms of the outcome. The gate must still be
+        // set then, and free after the window, or the survey loops forever.
+        let bridge = makeBridge()
+        var pending: [() -> Void] = []
+        bridge.schedule = { _, work in pending.append(work) }
+        var received: [String] = []
+        bridge.registerInAppListener(
+            onPayload: { received.append($0["experimentId"] as? String ?? "") },
+            onInvalidate: { _ in }
+        )
+
+        prepare(bridge, experimentId: "exp_1")
+        bridge.releaseGateAfterEchoWindow(experimentId: "exp_1")
+        prepare(bridge, experimentId: "exp_1")
+
+        #expect(received == ["exp_1"], "the echo inside the window stays blocked")
+
+        for work in pending { work() }
+        prepare(bridge, experimentId: "exp_1")
+
+        #expect(received == ["exp_1", "exp_1"], "after the window the campaign can come back")
+    }
+
     @Test("a campaign claimed by a keyless digia-config block is suppressed but holds nothing")
     func keylessBlockHoldsNoGate() {
         // The gate deliberately claims a `<template id="digia-config">` block whether or not

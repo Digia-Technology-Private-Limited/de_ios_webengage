@@ -27,8 +27,9 @@ import DigiaEngage
 /// (`WebEngageSdkBridge.notificationPrepared`), that experiment is marked active
 /// and WebEngage will not prepare it again. Because a suppressed notification
 /// never reaches WebEngage's own dismiss callback, nothing on WebEngage's side
-/// ever clears that mark — so the plugin must, and it does so when the
-/// presentation's `outcome` settles, on **both** arms.
+/// ever clears that mark — so the plugin must, and it does so 1 s after the
+/// presentation's `outcome` settles, on **both** arms: `notification_close`
+/// makes WebEngage re-prepare the campaign it just closed within milliseconds.
 ///
 /// The gate is bound to `outcome` rather than to `holdReleased` (spec §7.2
 /// sketches the latter) because it is a *de-duplication* gate, not a queue hold:
@@ -266,10 +267,14 @@ public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
 
     /// The single terminal funnel. Idempotent through `live`, so the outcome
     /// task, a WebEngage-side dismissal and `detach()` may all call it.
+    ///
+    /// The gate frees after the close-echo window, not here: `experienceEnded`
+    /// fires `notification_close` first, and WebEngage re-prepares the campaign
+    /// it just closed within milliseconds of that event.
     private func finish(experimentId: String, trigger: CEPTriggerPayload, displayed: Bool) {
         guard live.removeValue(forKey: experimentId) != nil else { return }
         dispatcher.experienceEnded(trigger, displayed: displayed)
-        bridge.releaseGate(experimentId: experimentId)
+        bridge.releaseGateAfterEchoWindow(experimentId: experimentId)
     }
 }
 

@@ -50,6 +50,7 @@ struct DigiaWebEngagePluginTests {
         await drainMainActor()
 
         #expect(h.bridge.releasedGates == ["exp_1"])
+        #expect(h.bridge.delayedGateReleases == ["exp_1"], "the outcome path must ride the echo window, not free the gate at once")
     }
 
     @Test("releases the gate when the campaign is dropped")
@@ -98,6 +99,7 @@ struct DigiaWebEngagePluginTests {
 
         #expect(h.core.isSettled)
         #expect(h.bridge.releasedGates == ["exp_1"])
+        #expect(h.bridge.delayedGateReleases == ["exp_1"], "cancel settles the outcome, so the free rides finish like every other terminal path")
     }
 
     // MARK: - notification_close: the dismissed arm only

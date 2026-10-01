@@ -32,6 +32,13 @@ internal protocol WebEngageBridgeProtocol: AnyObject {
     /// releases it when the presentation's `outcome` settles, on **both** arms.
     func releaseGate(experimentId: String)
 
+    /// Frees the gate after the close-echo window (see `echoWindow`).
+    ///
+    /// `notification_close` makes WebEngage re-run its rules, and the campaign
+    /// that just closed re-prepares within milliseconds. The outcome path uses
+    /// this; WebEngage-side dismissals and silent drops keep `releaseGate`.
+    func releaseGateAfterEchoWindow(experimentId: String)
+
     func unregisterInAppListener()
     func unregisterInlineListener()
     func isAvailable() -> Bool
@@ -207,6 +214,11 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
     private static let renderStartWindow: TimeInterval = 0.1
     private static let renderSettleTimeout: TimeInterval = 1.0
 
+    /// Close-echo window. Mirrors Flutter's `_gateReleaseDelay`: the
+    /// `notification_close` re-evaluation arrives within milliseconds, so the
+    /// gate stays shut for a generous 1 s after the outcome settles.
+    private static let echoWindow: TimeInterval = 1.0
+
     private func holdNextScreen() {
         guard !pendingScreens.isEmpty else {
             screenHoldActive = false
@@ -256,6 +268,13 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
         guard !experimentId.isEmpty else { return }
         activeExperimentIds.remove(experimentId)
         log.d("Gate released (experimentId=\(experimentId))")
+    }
+
+    func releaseGateAfterEchoWindow(experimentId: String) {
+        guard !experimentId.isEmpty else { return }
+        schedule(Self.echoWindow) { [self] in
+            self.releaseGate(experimentId: experimentId)
+        }
     }
 
     func unregisterInAppListener() {
