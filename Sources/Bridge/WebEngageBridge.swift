@@ -28,9 +28,14 @@ internal protocol WebEngageBridgeProtocol: AnyObject {
     ///
     /// The gate is set when a campaign is suppressed for Digia to render, and —
     /// because a suppressed notification never reaches WebEngage's own dismiss
-    /// callback — nothing on WebEngage's side ever clears it again. The plugin
-    /// releases it when the presentation's `outcome` settles, on **both** arms.
+    /// callback — nothing on WebEngage's side ever clears it again. Immediate
+    /// free, for WebEngage-side dismissals and silent drops; the outcome path
+    /// uses `notifyDismissed` instead.
     func releaseGate(experimentId: String)
+
+    /// Gate free, 1 s after the call (see `gateReleaseDelay`).
+    /// Called from the hold observer and drops with no presentation.
+    func notifyDismissed(experimentId: String)
 
     func unregisterInAppListener()
     func unregisterInlineListener()
@@ -108,14 +113,12 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
         // DigiaWebEngagePlugin.notificationDelegate. Nothing to do here at runtime.
         // Pre-attach payloads are not buffered. They drop at once as not_ready
         // with the gate freed, per de_workspace#42.
-        log.d("In-app listener registered")
     }
 
     func registerInlineListener(
         onInlineCampaign: @escaping (String, String, [String: Any], [String: Any]) -> Void
     ) {
         // App In-line is unsupported: no inline listener is ever registered.
-        log.d("Inline listener skipped — App In-line is unsupported")
     }
 
     /// Reads a private WebEngage value only if the target implements the selector.
@@ -173,24 +176,20 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
             andValue["event_data_overrides"] = eventData
         }
 
-        log.d("Track system event (name=\(eventName))")
-
         // Use trackSDKEventWithName:andValue: which bypasses reserved-name
         // guards and routes through the full SDK event pipeline.
-
-        if let analyticsCls = NSClassFromString("WEGAnalyticsImpl"),
-           let analytics = valuePrivate(analyticsCls as AnyObject, NSSelectorFromString("sharedInstance")) {
-            let fired = callPrivate(
-                analytics,
-                NSSelectorFromString("trackSDKEventWithName:andValue:"),
-                eventName as NSString,
-                andValue as NSDictionary
-            )
-            if fired {
-                log.d("System event fired (name=\(eventName))")
-            }
-        } else {
-            log.w("System event failed — analytics not available (name=\(eventName))")
+        let experimentId = systemData["experiment_id"] as? String ?? "-"
+        guard let analyticsCls = NSClassFromString("WEGAnalyticsImpl"),
+              let analytics = valuePrivate(analyticsCls as AnyObject, NSSelectorFromString("sharedInstance")),
+              callPrivate(
+                  analytics,
+                  NSSelectorFromString("trackSDKEventWithName:andValue:"),
+                  eventName as NSString,
+                  andValue as NSDictionary
+              )
+        else {
+            log.e("System event failed — continuing (event=\(eventName), experimentId=\(experimentId))")
+            return
         }
     }
 
@@ -206,6 +205,10 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
 
     private static let renderStartWindow: TimeInterval = 0.1
     private static let renderSettleTimeout: TimeInterval = 1.0
+
+    /// Close-echo window: the `notification_close` re-evaluation arrives within
+    /// milliseconds, so the gate stays shut for a generous 1 s.
+    private static let gateReleaseDelay: TimeInterval = 1.0
 
     private func holdNextScreen() {
         guard !pendingScreens.isEmpty else {
@@ -255,7 +258,13 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
     func releaseGate(experimentId: String) {
         guard !experimentId.isEmpty else { return }
         activeExperimentIds.remove(experimentId)
-        log.d("Gate released (experimentId=\(experimentId))")
+    }
+
+    func notifyDismissed(experimentId: String) {
+        guard !experimentId.isEmpty else { return }
+        schedule(Self.gateReleaseDelay) { [self] in
+            self.releaseGate(experimentId: experimentId)
+        }
     }
 
     func unregisterInAppListener() {
@@ -271,7 +280,6 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
     func unregisterInlineListener() {
         // App In-line is unsupported — no-op.
         onInlineCampaignCallback = nil
-        log.d("Inline listener unregister skipped — App In-line is unsupported")
     }
 
     func isAvailable() -> Bool { true }
@@ -310,8 +318,6 @@ extension WebEngageSdkBridge: WEGInAppNotificationProtocol {
             payload["experimentId"] = experimentId
         }
 
-        log.d("Digia campaign suppressed for rendering (experimentId=\(experimentId))")
-
         // ── Step 4: Claimed, but not mappable → let go of everything ────────────
         // `isDigiaCampaign` is deliberately wider than the mapper: a
         // `<template id="digia-config">` block claims the campaign even when the
@@ -324,11 +330,7 @@ extension WebEngageSdkBridge: WEGInAppNotificationProtocol {
         // release path: unlike Android, iOS hands back no in-app queue handle.
         guard WebEngagePayloadMapper.resolveConfig(raw) != nil
             || WebEngagePayloadMapper.badTopLevelCampaignKey(in: raw) != nil else {
-            log.w(
-                "Suppressed and dropped — digia-config block with no campaign key (experimentId=\(experimentId)). "
-                    + "Holding neither the gate nor the cache. Add a "
-                    + "<meta name=\"campaign-key\" content=\"…\"> to the block."
-            )
+            // Takes neither gate nor cache: nothing downstream settles it.
             return inAppNotificationData
         }
 
@@ -344,9 +346,9 @@ extension WebEngageSdkBridge: WEGInAppNotificationProtocol {
         }
 
         // ── Step 6: Gate check — block duplicate fires for the same campaign ───
+        // Duplicates never reach the plugin; stay silent.
         if !experimentId.isEmpty {
             if activeExperimentIds.contains(experimentId) {
-                log.d("Duplicate delivery blocked (experimentId=\(experimentId))")
                 return inAppNotificationData
             }
             activeExperimentIds.insert(experimentId)
@@ -361,9 +363,8 @@ extension WebEngageSdkBridge: WEGInAppNotificationProtocol {
         } else {
             let campaignKey = WebEngagePayloadMapper.resolveConfig(payload)?.campaignKey
             log.w(
-                "No Digia plugin registered when experimentId=\(experimentId) prepared — "
-                    + "dropping as not_ready and releasing gate. "
-                    + "Call Digia.register(DigiaWebEngagePlugin()) during startup.",
+                "Dropping in-app — no host attached (reason=not_ready, "
+                    + "experimentId=\(experimentId.isEmpty ? "-" : experimentId))",
                 campaign: campaignKey,
                 stage: .trigger,
                 reason: DropReason.notReady
@@ -377,15 +378,12 @@ extension WebEngageSdkBridge: WEGInAppNotificationProtocol {
     }
 
     @objc func notificationShown(_ inAppNotificationData: [String: Any]!) {
-        let id = inAppNotificationData?["experimentId"] as? String ?? ""
-        log.d("WebEngage in-app shown (experimentId=\(id))")
     }
 
     @objc func notificationDismissed(_ inAppNotificationData: [String: Any]!) {
         let id = str(inAppNotificationData?["notificationEncId"]
                      ?? inAppNotificationData?["experimentId"]
                      ?? inAppNotificationData?["experiment_id"]) ?? ""
-        log.d("WebEngage in-app dismissed (experimentId=\(id))")
         if !id.isEmpty {
             // Release the gate so the campaign can show again if re-triggered.
             releaseGate(experimentId: id)
@@ -394,8 +392,6 @@ extension WebEngageSdkBridge: WEGInAppNotificationProtocol {
     }
 
     @objc func notification(_ inAppNotificationData: [String: Any]!, clickedWithAction actionId: String!) {
-        let id = inAppNotificationData?["experimentId"] as? String ?? ""
-        log.d("WebEngage in-app clicked (experimentId=\(id), actionId=\(actionId ?? ""))")
     }
 }
 

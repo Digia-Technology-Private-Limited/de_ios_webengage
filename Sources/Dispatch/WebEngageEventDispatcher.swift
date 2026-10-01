@@ -46,7 +46,7 @@ internal final class WebEngageEventDispatcher {
         if let cta {
             systemData["call_to_action"] = cta
         }
-        log.i("CEP click marked (notification_click, experimentId=\(ids.experimentId)\(cta != nil ? ", cta=\(cta!)" : ""))", campaign: payload.campaignKey)
+        log.i("CEP click marked (notification_click, experimentId=\(ids.experimentId), cta=\(cta ?? "-"))", campaign: payload.campaignKey)
         bridge.trackSystemEvent(eventName: "notification_click", systemData: systemData, eventData: [:])
     }
 

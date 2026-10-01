@@ -13,6 +13,7 @@ final class FakeWebEngageBridge: WebEngageBridgeProtocol, @unchecked Sendable {
     private(set) var events: [SystemEvent] = []
     private(set) var navigatedScreens: [String] = []
     private(set) var releasedGates: [String] = []
+    private(set) var delayedGateReleases: [String] = []
     private(set) var inAppListenerRegistered = false
     private(set) var inAppListenerUnregistered = false
 
@@ -56,6 +57,13 @@ final class FakeWebEngageBridge: WebEngageBridgeProtocol, @unchecked Sendable {
     func releaseGate(experimentId: String) {
         releasedGates.append(experimentId)
         onReleaseGate?(experimentId)
+    }
+
+    /// Runs at once: timing is the real bridge's business (see
+    /// `WebEngageSdkBridgeTests`), the plugin only chooses the path.
+    func notifyDismissed(experimentId: String) {
+        delayedGateReleases.append(experimentId)
+        releaseGate(experimentId: experimentId)
     }
 
     func unregisterInAppListener() {
