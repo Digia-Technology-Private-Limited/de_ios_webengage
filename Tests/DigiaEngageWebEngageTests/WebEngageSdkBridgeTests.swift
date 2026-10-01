@@ -164,7 +164,7 @@ struct WebEngageSdkBridgeTests {
         )
 
         prepare(bridge, experimentId: "exp_1")
-        bridge.releaseGateAfterEchoWindow(experimentId: "exp_1")
+        bridge.notifyDismissed(experimentId: "exp_1")
         prepare(bridge, experimentId: "exp_1")
 
         #expect(received == ["exp_1"], "the echo inside the window stays blocked")

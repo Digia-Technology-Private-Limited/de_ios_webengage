@@ -104,7 +104,7 @@ public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
 
     public func attach(host: DigiaCEPHost) {
         self.host = host
-        log.i("Plugin attached — listening for in-app and inline campaigns")
+        log.i("Plugin attached — listening for in-app campaigns")
         bridge.registerInAppListener(
             onPayload:    { [weak self] data in onMainActor { self?.dispatchMappedPayload(data) } },
             onInvalidate: { [weak self] id   in onMainActor { self?.dispatchInvalidation(campaignID: id) } }
@@ -221,7 +221,8 @@ public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
         let experimentId = trigger.cepMetadata["experimentId"] ?? trigger.cepCampaignId
         guard let host else {
             log.w(
-                "Payload dropped — host unavailable (payloadId=\(trigger.cepCampaignId), reason=not_ready)",
+                "Dropping in-app — no host attached (reason=not_ready, "
+                    + "experimentId=\(experimentId.isEmpty ? "-" : experimentId))",
                 campaign: trigger.campaignKey,
                 stage: .trigger,
                 reason: DropReason.notReady
@@ -232,9 +233,7 @@ public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
             }
             return
         }
-        let isInline = trigger.cepMetadata["propertyId"] != nil
-        let channel = isInline ? "inline" : "in-app"
-        log.i("Received — \(channel) (experimentId=\(experimentId))", campaign: trigger.campaignKey)
+        log.i("Received — in-app (experimentId=\(experimentId))", campaign: trigger.campaignKey)
 
         let presentation = host.deliver(trigger)
         live[experimentId] = presentation
@@ -268,13 +267,12 @@ public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
     /// The single terminal funnel. Idempotent through `live`, so the outcome
     /// task, a WebEngage-side dismissal and `detach()` may all call it.
     ///
-    /// The gate frees after the close-echo window, not here: `experienceEnded`
-    /// fires `notification_close` first, and WebEngage re-prepares the campaign
-    /// it just closed within milliseconds of that event.
+    /// Gate frees 1 s after settle, not here: `notification_close` fires first
+    /// and WebEngage re-prepares the closed campaign within milliseconds.
     private func finish(experimentId: String, trigger: CEPTriggerPayload, displayed: Bool) {
         guard live.removeValue(forKey: experimentId) != nil else { return }
         dispatcher.experienceEnded(trigger, displayed: displayed)
-        bridge.releaseGateAfterEchoWindow(experimentId: experimentId)
+        bridge.notifyDismissed(experimentId: experimentId)
     }
 }
 

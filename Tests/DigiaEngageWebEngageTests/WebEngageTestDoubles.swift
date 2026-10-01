@@ -61,7 +61,7 @@ final class FakeWebEngageBridge: WebEngageBridgeProtocol, @unchecked Sendable {
 
     /// Runs at once: timing is the real bridge's business (see
     /// `WebEngageSdkBridgeTests`), the plugin only chooses the path.
-    func releaseGateAfterEchoWindow(experimentId: String) {
+    func notifyDismissed(experimentId: String) {
         delayedGateReleases.append(experimentId)
         releaseGate(experimentId: experimentId)
     }
