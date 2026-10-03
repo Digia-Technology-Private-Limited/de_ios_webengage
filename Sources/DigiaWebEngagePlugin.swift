@@ -244,7 +244,7 @@ public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
     /// Three bindings, and no fourth: view/click ride `onSignal`, the close
     /// analytic rides `outcome` via `finish`, and the gate rides `holdReleased`
     /// via `notifyDismissed` — see the type doc.
-    private func deliver(_ trigger: CEPTriggerPayload) {
+    private func deliver(_ trigger: CEPTriggerPayload, heldAt: Date? = nil) {
         let experimentId = Self.experimentId(of: trigger)
         guard let host else {
             log.w(
@@ -258,14 +258,14 @@ public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
             return
         }
         guard host.isReady || hostFailed else {
-            pending.add(trigger)
+            pending.add(trigger, heldAt: heldAt)
             return
         }
         log.i("Received — in-app (experimentId=\(experimentId))", campaign: trigger.campaignKey)
 
         let presentation = host.deliver(trigger)
         if presentation.outcome.settledValue?.isHostNotReady == true {
-            pending.add(trigger)
+            pending.add(trigger, heldAt: heldAt)
             return
         }
         live[experimentId] = presentation
@@ -302,7 +302,7 @@ public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
     }
 
     private func flushPending() {
-        for trigger in pending.drain() { deliver(trigger) }
+        for held in pending.drain() { deliver(held.item, heldAt: held.heldAt) }
     }
 
     private nonisolated static func experimentId(of trigger: CEPTriggerPayload) -> String {
