@@ -60,6 +60,13 @@ public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
     /// can all race and only the first one does any work.
     private var live: [String: CampaignPresentation] = [:]
 
+    /// In-apps held while Core is not READY (de_workspace#71). WebEngage's queue
+    /// waits until each one settles.
+    private let pending: PendingPayloadBuffer<CEPTriggerPayload>
+
+    /// Set by ``onHostInitFailed()``: deliver directly so Core drops at once.
+    private var hostFailed = false
+
     // MARK: - AppDelegate hook
 
     /// The in-app notification delegate that must be passed to WebEngage at SDK
@@ -92,12 +99,19 @@ public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
         bridge: WebEngageBridgeProtocol,
         mapper: WebEngagePayloadMapper,
         config: WebEngagePluginConfig,
-        cache:  InAppDataCache
+        cache:  InAppDataCache,
+        schedule: @escaping PendingPayloadBuffer<CEPTriggerPayload>.Scheduler = PendingPayloadBuffer<CEPTriggerPayload>.mainQueueScheduler,
+        now: @escaping () -> Date = Date.init
     ) {
         self.bridge  = bridge
         self.mapper  = mapper
         self.config  = config
         self.cache   = cache
+        let log = DigiaLogger("WE")
+        self.pending = PendingPayloadBuffer(now: now, schedule: schedule) { trigger, reason in
+            log.w("Dropping held in-app (\(reason.wire))", campaign: trigger.campaignKey, stage: .trigger, reason: reason)
+            settleUndelivered(Self.experimentId(of: trigger), cache: cache, bridge: bridge)
+        }
     }
 
     // MARK: - DigiaCEPPlugin
@@ -116,6 +130,17 @@ public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
             }
         }
         callbacksRegistered = true
+        if host.isReady { flushPending() }
+    }
+
+    public func onHostReady() {
+        hostFailed = false
+        flushPending()
+    }
+
+    public func onHostInitFailed() {
+        hostFailed = true
+        pending.dropAll(DropReason.initializationFailed)
     }
 
     public func onScreenChanged(_ screenName: String) {
@@ -125,6 +150,8 @@ public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
     public func detach() {
         bridge.unregisterInAppListener()
         bridge.unregisterInlineListener()
+        pending.dropAll(DropReason.pluginDetached)
+        hostFailed = false
 
         // Core settles a plugin's presentations before detaching it, but the
         // tasks awaiting those outcomes have not necessarily run yet — and a
@@ -218,7 +245,7 @@ public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
     /// analytic rides `outcome` via `finish`, and the gate rides `holdReleased`
     /// via `notifyDismissed` — see the type doc.
     private func deliver(_ trigger: CEPTriggerPayload) {
-        let experimentId = trigger.cepMetadata["experimentId"] ?? trigger.cepCampaignId
+        let experimentId = Self.experimentId(of: trigger)
         guard let host else {
             log.w(
                 "Dropping in-app — no host attached (reason=not_ready, "
@@ -227,15 +254,20 @@ public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
                 stage: .trigger,
                 reason: DropReason.notReady
             )
-            if !experimentId.isEmpty {
-                cache.remove(experimentId: experimentId)
-                bridge.notifyDismissed(experimentId: experimentId)
-            }
+            settleUndelivered(experimentId, cache: cache, bridge: bridge)
+            return
+        }
+        guard host.isReady || hostFailed else {
+            pending.add(trigger)
             return
         }
         log.i("Received — in-app (experimentId=\(experimentId))", campaign: trigger.campaignKey)
 
         let presentation = host.deliver(trigger)
+        if presentation.outcome.settledValue?.isHostNotReady == true {
+            pending.add(trigger)
+            return
+        }
         live[experimentId] = presentation
 
         _ = presentation.onSignal { [weak self] signal in
@@ -269,6 +301,14 @@ public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
         }
     }
 
+    private func flushPending() {
+        for trigger in pending.drain() { deliver(trigger) }
+    }
+
+    private nonisolated static func experimentId(of trigger: CEPTriggerPayload) -> String {
+        trigger.cepMetadata["experimentId"] ?? trigger.cepCampaignId
+    }
+
     /// The single terminal funnel. Idempotent through `live`, so the outcome
     /// task, a WebEngage-side dismissal and `detach()` may all call it.
     /// Markings and cache eviction only — the gate rides `holdReleased`.
@@ -292,6 +332,14 @@ private func onMainActor(_ work: @escaping @MainActor () -> Void) {
     } else {
         DispatchQueue.main.async { MainActor.assumeIsolated(work) }
     }
+}
+
+/// Settles an undelivered in-app with WebEngage: frees its cache entry and its gate.
+@MainActor
+private func settleUndelivered(_ experimentId: String, cache: InAppDataCache, bridge: WebEngageBridgeProtocol) {
+    guard !experimentId.isEmpty else { return }
+    cache.remove(experimentId: experimentId)
+    bridge.notifyDismissed(experimentId: experimentId)
 }
 
 /// `dismissed` is the only arm that means the experience reached the screen.
