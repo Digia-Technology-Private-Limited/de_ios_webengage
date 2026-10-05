@@ -318,7 +318,7 @@ public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
         pending.dropAll(DropReason.initializationFailed)
     }
 
-    private func onPendingDropped(_ trigger: CEPTriggerPayload, _ reason: DiagnosticReason) {
+    private func onPendingDropped(_ trigger: CEPTriggerPayload, _ reason: DropReason) {
         let experimentId = Self.experimentId(of: trigger)
         log.w("Dropped while held (experimentId=\(experimentId))", campaign: trigger.campaignKey, stage: .trigger, reason: reason)
         settleUndelivered(experimentId)
