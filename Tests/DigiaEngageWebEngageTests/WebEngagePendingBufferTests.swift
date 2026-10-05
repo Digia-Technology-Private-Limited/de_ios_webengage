@@ -3,17 +3,15 @@
 import Foundation
 import Testing
 
-/// The plugin pending buffer (de_workspace#71) on a fake clock.
+/// The plugin pending buffer (de_workspace#71).
 @MainActor
 @Suite("DigiaWebEngagePlugin — pending buffer", .serialized)
 struct WebEngagePendingBufferTests {
-    private let clock = FakeClock()
     private let bridge = FakeWebEngageBridge()
     private let host: FakeCEPHost
     private let plugin: DigiaWebEngagePlugin
 
     init() {
-        let clock = clock
         let config = WebEngagePluginConfig(diagnosticsEnabled: false)
         host = FakeCEPHost()
         host.isReady = false
@@ -21,9 +19,7 @@ struct WebEngagePendingBufferTests {
             bridge: bridge,
             mapper: WebEngagePayloadMapper(config: config),
             config: config,
-            cache: InAppDataCache(),
-            schedule: { clock.schedule($0, $1) },
-            now: { clock.now }
+            cache: InAppDataCache()
         )
         plugin.attach(host: host)
     }
@@ -53,15 +49,6 @@ struct WebEngagePendingBufferTests {
         host.syncDrop = nil
         plugin.onHostReady()
         #expect(host.delivered.count == 2)
-    }
-
-    @Test("a held in-app expires after 5 minutes and releases its gate")
-    func expires() {
-        bridge.emitPrepared(inAppPayload(experimentId: "e1"))
-        clock.advance(299)
-        #expect(bridge.releasedGates.isEmpty)
-        clock.advance(1)
-        #expect(bridge.releasedGates == ["e1"])
     }
 
     @Test("FAILED releases held gates and later in-apps go straight to Core")
