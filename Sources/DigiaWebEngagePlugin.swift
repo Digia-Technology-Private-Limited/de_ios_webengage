@@ -320,7 +320,7 @@ public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
 
     private func onPendingDropped(_ trigger: CEPTriggerPayload, _ reason: DropReason) {
         let experimentId = Self.experimentId(of: trigger)
-        log.w("Dropped while held (experimentId=\(experimentId))", campaign: trigger.campaignKey, stage: .trigger, reason: reason)
+        log.w("Dropped while held (experimentId=\(experimentId))", campaign: trigger.campaignKey, stage: .trigger, reason: reason, extras: ["cep": "webengage"])
         settleUndelivered(experimentId)
     }
 
