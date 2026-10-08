@@ -125,11 +125,20 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
     ///
     /// A miss logs at warning level and skips — private symbols move between
     /// versions, and an unguarded send crashes the host app.
+    private func logMissing(_ sel: Selector) {
+        let selector = NSStringFromSelector(sel)
+        log.w(
+            "Missing WebEngage private API — skipped (selector=\(selector))",
+            reason: CEPPluginReason.bridgeUnavailable,
+            extras: ["selector": selector]
+        )
+    }
+
     /// Internal for tests: linked binaries have every selector, so only a
     /// direct call against a bare object exercises the miss path.
     internal func valuePrivate(_ target: AnyObject, _ sel: Selector) -> AnyObject? {
         guard target.responds(to: sel) else {
-            log.w("Missing WebEngage private API — skipped (selector=\(NSStringFromSelector(sel)))")
+            logMissing(sel)
             return nil
         }
         typealias ObjectIMP = @convention(c) (AnyObject, Selector) -> Unmanaged<AnyObject>?
@@ -140,7 +149,7 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
     /// Reads a private WebEngage `BOOL` with the same guard as [valuePrivate].
     internal func boolPrivate(_ target: AnyObject, _ sel: Selector) -> Bool {
         guard target.responds(to: sel) else {
-            log.w("Missing WebEngage private API — skipped (selector=\(NSStringFromSelector(sel)))")
+            logMissing(sel)
             return false
         }
         typealias BoolIMP = @convention(c) (AnyObject, Selector) -> ObjCBool
@@ -156,7 +165,7 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
     @discardableResult
     internal func callPrivate(_ target: AnyObject, _ sel: Selector, _ arg1: AnyObject, _ arg2: AnyObject) -> Bool {
         guard target.responds(to: sel) else {
-            log.w("Missing WebEngage private API — skipped (selector=\(NSStringFromSelector(sel)))")
+            logMissing(sel)
             return false
         }
         typealias VoidIMP = @convention(c) (AnyObject, Selector, AnyObject, AnyObject) -> Void
