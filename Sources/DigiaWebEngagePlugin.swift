@@ -271,6 +271,8 @@ public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
                 self.dispatcher.notificationViewed(trigger)
             case .clicked(let elementId):
                 self.dispatcher.notificationClicked(trigger, elementId: elementId)
+            @unknown default:
+                break
             }
         }
 
