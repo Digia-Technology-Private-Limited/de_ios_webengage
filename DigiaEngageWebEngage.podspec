@@ -5,11 +5,11 @@ Pod::Spec.new do |s|
   s.description      = <<-DESC
     Routes WebEngage in-app campaigns into Digia Engage.
   DESC
-  s.homepage         = 'https://github.com/Digia-Technology-Private-Limited/digia_engage_webengage_ios'
+  s.homepage         = 'https://github.com/Digia-Technology-Private-Limited/de_ios_webengage'
   s.license          = { :type => 'BSL-1.1', :file => 'LICENSE' }
   s.author           = { 'Digia Engg' => 'engg@digia.tech' }
   s.source           = {
-    :git => 'https://github.com/Digia-Technology-Private-Limited/digia_engage_webengage_ios.git',
+    :git => 'https://github.com/Digia-Technology-Private-Limited/de_ios_webengage.git',
     :tag => s.version.to_s
   }
   s.platform         = :ios, '15.0'
