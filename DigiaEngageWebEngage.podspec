@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name             = 'DigiaEngageWebEngage'
-  s.version          = '1.0.0'
+  s.version          = '2.0.0'
   s.summary          = 'Digia Engage WebEngage plugin for iOS.'
   s.description      = <<-DESC
     Routes WebEngage in-app campaigns into Digia Engage.
