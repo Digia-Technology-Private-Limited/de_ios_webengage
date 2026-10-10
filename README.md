@@ -17,8 +17,6 @@ DigiaEngageWebEngage is an iOS CEP plugin that integrates the WebEngage SDK with
 - iOS: 15.0+
 - Swift tools: 6.0
 
-**iOS 15 is the package's deployment floor, not where campaigns run.** Digia Engage renders campaigns on iOS 17 and later. On earlier versions `Digia.initialize` and `Digia.register` do nothing, so the app builds and runs but shows no Digia campaigns.
-
 ## Installation
 
 ### Swift Package Manager
