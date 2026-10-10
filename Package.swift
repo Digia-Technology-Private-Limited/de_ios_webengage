@@ -6,8 +6,8 @@ import PackageDescription
 // │                                                                             │
 // │  SPM dependency (this package):                                             │
 // │    .package(                                                                │
-// │        url: "…/digia_engage_webengage.git",                                 │
-// │        from: "1.0.0"                                                        │
+// │        url: "…/de_ios_webengage.git",                                       │
+// │        from: "2.0.0"                                                        │
 // │    )                                                                        │
 // │                                                                             │
 // │  ⚠️  WebEngage 7.1.0 comes in through this package (WebEngage's own CDN     │
