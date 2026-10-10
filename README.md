@@ -10,11 +10,11 @@ DigiaEngageWebEngage is an iOS CEP plugin that integrates the WebEngage SDK with
 - **Package name:** DigiaEngageWebEngage
 - **WebEngage version:** 7.1.0, pinned exactly (SPM binary target and CocoaPods)
 - **Swift tools version:** 6.0 (see `Package.swift`)
-- **Minimum platform:** iOS 17.0
+- **Minimum platform:** iOS 15.0
 
 ## Requirements
 
-- iOS: 17.0+
+- iOS: 15.0+
 - Swift tools: 6.0
 
 ## Installation
@@ -26,8 +26,8 @@ Add this package to your `Package.swift` or add it in Xcode via **File → Add P
 ```swift
 dependencies: [
     .package(
-        url: "https://github.com/Digia-Technology-Private-Limited/digia_webengage_iOS.git",
-        from: "1.0.0"
+        url: "https://github.com/Digia-Technology-Private-Limited/de_ios_webengage.git",
+        from: "2.0.0"
     ),
 ]
 ```
@@ -38,7 +38,7 @@ Then add the library to your app target:
 .target(
     name: "YourAppTarget",
     dependencies: [
-        .product(name: "DigiaEngageWebEngage", package: "digia_webengage_iOS"),
+        .product(name: "DigiaEngageWebEngage", package: "de_ios_webengage"),
     ]
 )
 ```
