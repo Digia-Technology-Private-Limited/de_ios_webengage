@@ -1,116 +1,93 @@
 import Foundation
 import DigiaEngage
 
-/// Translates `DigiaExperienceEvent` + `CEPTriggerPayload` into WebEngage analytics calls.
-/// Mirrors `WebEngageEventDispatcher.kt` on Android.
+/// Translates a presentation's signals and terminal outcome into WebEngage
+/// analytics calls. Mirrors `WebEngageEventDispatcher.kt` on Android.
+///
+/// The v2 split matters here: `notification_view` and `notification_click` are
+/// **signals** — best-effort, mid-flight — while `notification_close` rides the
+/// terminal path, and only on the arm where the experience actually displayed.
+/// A close reported for a campaign that never rendered corrupts WebEngage's
+/// own view/close funnel for that experiment, and there is no way to unsend it.
 @MainActor
 internal final class WebEngageEventDispatcher {
 
     private let bridge: WebEngageBridgeProtocol
     private let cache: InAppDataCache
-    private let config: WebEngagePluginConfig
+    private let log = DigiaLogger("WE")
 
-    init(bridge: WebEngageBridgeProtocol, cache: InAppDataCache, config: WebEngagePluginConfig) {
+    init(bridge: WebEngageBridgeProtocol, cache: InAppDataCache) {
         self.bridge = bridge
         self.cache = cache
-        self.config = config
     }
 
     // MARK: - Public
 
-    func forwardScreen(_ name: String) {
-        bridge.navigateScreen(name)
+    func forwardScreen(_ screenName: String) {
+        log.d("Screen forwarded (screen=\(screenName))")
+        bridge.navigateScreen(screenName)
     }
 
-    /// Returns `true` when the event was dispatched.
-    ///
-    /// Routing is driven by `payload.cepMetadata["type"]`:
-    /// - `"inline"` → `notification_*` system events (WE Personalization has no lifecycle API;
-    ///   impression emits `notification_view` + `notification_close`, click emits
-    ///   `notification_click`). Dismissed is a no-op for inline.
-    /// - Other → `notification_*` system events (WE in-app API).
-    @discardableResult
-    func dispatch(event: DigiaExperienceEvent, payload: CEPTriggerPayload) -> Bool {
-        if payload.cepMetadata["type"] == "inline" {
-            dispatchInlineEvent(event: event, payload: payload)
-            return true
-        }
-        return dispatchInAppEvent(event: event, payload: payload)
+    /// The experience became visible.
+    func notificationViewed(_ payload: CEPTriggerPayload) {
+        let ids = identifiers(for: payload)
+        log.i("CEP impression marked (notification_view, experimentId=\(ids.experimentId))", campaign: payload.campaignKey)
+        bridge.trackSystemEvent(eventName: "notification_view", systemData: ids.systemData, eventData: [:])
     }
 
-    // MARK: - In-App
-
-    private func dispatchInAppEvent(event: DigiaExperienceEvent, payload: CEPTriggerPayload) -> Bool {
-        let experimentId = payload.cepMetadata["experimentId"] ?? payload.cepCampaignId
-
-        let cachedData = cache.get(experimentId: experimentId)
-        let weExperimentId = str(cachedData?["experimentId"]) ?? experimentId
-        let weVariationId  = str(cachedData?["variationId"])
-                          ?? payload.cepMetadata["variationId"]
-                          ?? payload.cepCampaignId
-
-        let eventName: String
-        switch event {
-        case .impressed:  eventName = "notification_view"
-        case .clicked:    eventName = "notification_click"
-        case .dismissed:  eventName = "notification_close"
+    /// A qualifying interaction with the experience.
+    func notificationClicked(_ payload: CEPTriggerPayload, elementId: String?) {
+        let ids = identifiers(for: payload)
+        var systemData = ids.systemData
+        let cta = elementId.flatMap { raw -> String? in
+            let trimmed = raw.trimmingCharacters(in: .whitespaces)
+            return trimmed.isEmpty ? nil : trimmed
         }
-
-        var systemData: [String: Any] = [
-            "experiment_id": weExperimentId,
-            "id": weVariationId,
-        ]
-        if case .clicked(let elementID) = event,
-           let cta = elementID?.trimmingCharacters(in: .whitespaces),
-           !cta.isEmpty {
+        if let cta {
             systemData["call_to_action"] = cta
         }
-
-        bridge.trackSystemEvent(eventName: eventName, systemData: systemData, eventData: [:])
-
-        if case .dismissed = event {
-            bridge.releaseCampaignGate(experimentId)
-            cache.remove(experimentId: experimentId)
-            logDebug("dispatched: \(eventName) experimentId=\(experimentId) (evicted)")
-        } else {
-            logDebug("dispatched: \(eventName) experimentId=\(experimentId)")
-        }
-        return true
+        log.i("CEP click marked (notification_click, experimentId=\(ids.experimentId), cta=\(cta ?? "-"))", campaign: payload.campaignKey)
+        bridge.trackSystemEvent(eventName: "notification_click", systemData: systemData, eventData: [:])
     }
 
-    // MARK: - Inline
+    /// The presentation settled. Terminal, and reached on **both** outcome arms.
+    ///
+    /// - Parameter displayed: whether the experience actually reached the screen
+    ///   — the `dismissed` arm of `PresentationOutcome`. `notification_close` is
+    ///   sent only then: a campaign Digia dropped had no notification to close,
+    ///   and reporting one would book a close against an impression that never
+    ///   happened.
+    func experienceEnded(_ payload: CEPTriggerPayload, displayed: Bool) {
+        let ids = identifiers(for: payload)
 
-    private func dispatchInlineEvent(event: DigiaExperienceEvent, payload: CEPTriggerPayload) {
-        if case .dismissed = event { return }
+        if displayed {
+            log.i("CEP close marked (notification_close, experimentId=\(ids.experimentId))", campaign: payload.campaignKey)
+            bridge.trackSystemEvent(eventName: "notification_close", systemData: ids.systemData, eventData: [:])
+        }
+        cache.remove(experimentId: ids.experimentId)
+    }
 
+    // MARK: - Identifiers
+
+    /// WebEngage names every analytics event by experiment + variation. The
+    /// cached `notificationPrepared` payload is authoritative when present; the
+    /// trigger's own metadata is the fallback for a campaign whose cache entry
+    /// has already been evicted.
+    private func identifiers(for payload: CEPTriggerPayload) -> (experimentId: String, systemData: [String: Any]) {
         let experimentId = payload.cepMetadata["experimentId"] ?? payload.cepCampaignId
         let cachedData = cache.get(experimentId: experimentId)
         let weExperimentId = str(cachedData?["experimentId"]) ?? experimentId
-        let weVariationId  = str(cachedData?["variationId"])
-                          ?? payload.cepMetadata["variationId"]
-                          ?? payload.cepCampaignId
+        let weVariationId = str(cachedData?["variationId"])
+            ?? payload.cepMetadata["variationId"]
+            ?? payload.cepCampaignId
 
-        var systemData: [String: Any] = [
-            "experiment_id": weExperimentId,
-            "id": weVariationId,
-        ]
-
-        switch event {
-        case .impressed:
-            bridge.trackSystemEvent(eventName: "notification_view", systemData: systemData, eventData: [:])
-            bridge.trackSystemEvent(eventName: "notification_close", systemData: systemData, eventData: [:])
-            bridge.releaseCampaignGate(experimentId)
-            cache.remove(experimentId: experimentId)
-            logDebug("dispatched: notification_view + notification_close (inline) experimentId=\(experimentId)")
-        case .clicked(let elementID):
-            if let cta = elementID?.trimmingCharacters(in: .whitespaces), !cta.isEmpty {
-                systemData["call_to_action"] = cta
-            }
-            bridge.trackSystemEvent(eventName: "notification_click", systemData: systemData, eventData: [:])
-            logDebug("dispatched: notification_click (inline) experimentId=\(experimentId)")
-        case .dismissed:
-            break
-        }
+        return (
+            experimentId,
+            [
+                "experiment_id": weExperimentId,
+                "id": weVariationId,
+            ]
+        )
     }
 
     // MARK: - Helper
@@ -118,9 +95,5 @@ internal final class WebEngageEventDispatcher {
     private func str(_ value: Any?) -> String? {
         guard let s = (value as? String)?.trimmingCharacters(in: .whitespaces), !s.isEmpty else { return nil }
         return s
-    }
-
-    private func logDebug(_ message: String) {
-        if config.diagnosticsEnabled { NSLog("[Digia WebEngage] \(message)") }
     }
 }

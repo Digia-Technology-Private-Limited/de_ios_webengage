@@ -1,6 +1,6 @@
 import Foundation
 
-/// Configuration object passed when constructing `WebEngagePlugin`.
+/// Configuration object passed when constructing `DigiaWebEngagePlugin`.
 @objc public class WebEngagePluginConfig: NSObject {
     @objc public let diagnosticsEnabled: Bool
 
