@@ -10,10 +10,8 @@ import PackageDescription
 // │        from: "2.0.0"                                                        │
 // │    )                                                                        │
 // │                                                                             │
-// │  ⚠️  WebEngage 7.1.0 comes in through this package (WebEngage's own CDN     │
-// │  binary). Do NOT also add WebEngage separately (CocoaPods or SPM) — that    │
-// │  duplicates the framework's symbols in the host binary and the linker       │
-// │  fails. This package is the only place WebEngage should be declared.        │
+// │  WebEngage comes from its official Swift package. Do not add that package   │
+// │  separately; SwiftPM resolves this transitive dependency for the host.      │
 // └─────────────────────────────────────────────────────────────────────────────┘
 
 let package = Package(
@@ -41,20 +39,20 @@ let package = Package(
             url: "https://github.com/Digia-Technology-Private-Limited/digia_engage_ios.git",
             from: "4.0.0"
         ),
+        // WebEngage versions its Swift package independently from the native
+        // binary it contains. Package 2.0.0...2.0.4 carry native SDK
+        // 7.0.0...7.0.4 respectively. Keep the package below its next major.
+        .package(
+            url: "https://github.com/WebEngage/webengage-ios-sdk.git",
+            "2.0.0"..<"3.0.0"
+        ),
     ],
     targets: [
-        // WebEngage 7.1.0, the binary WebEngage's own webengage-ios-sdk package points at. No
-        // tag of that package carries 7.1.0 yet (2.0.4 is 7.0.4), so the pin is the URL.
-        .binaryTarget(
-            name: "WebEngage",
-            url: "https://we-sdk.webengage.com/ios/WebEngageCore/7.1.0/WebEngageCore.zip",
-            checksum: "9b4bbc75e12fba962710363b3a45abe17e2a6493a2302ea5c2a336579885544d"
-        ),
         .target(
             name: "DigiaEngageWebEngage",
             dependencies: [
                 .product(name: "DigiaEngage", package: "digia_engage_ios"),
-                .target(name: "WebEngage"),
+                .product(name: "WebEngageCore", package: "webengage-ios-sdk"),
             ],
             path: "Sources"
         ),

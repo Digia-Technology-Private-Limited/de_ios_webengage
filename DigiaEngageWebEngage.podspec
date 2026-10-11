@@ -16,10 +16,10 @@ Pod::Spec.new do |s|
   s.swift_version    = '6.0'
   s.source_files     = 'Sources/**/*.swift'
 
-  # WebEngage is a DEPENDENCY here, never vendored: a second copy collides with the one
-  # every real WebEngage app already has, and `pod install` fails. Pinned to 7.1.0, the
-  # version Package.swift and the Flutter plugin use, so every stack runs one WebEngage.
-  s.dependency 'WebEngage', '7.1.0'
+  # WebEngage is a dependency here, never vendored: CocoaPods must resolve one
+  # shared copy with the host app and any vendor wrapper. Keep the supported
+  # native SDK on the verified 7.0.4–7.1.x line and adopt 7.2.x deliberately.
+  s.dependency 'WebEngage', '>= 7.0.4', '< 7.2.0'
 
   # DigiaEngage takes a range, not an exact pin: CocoaPods has to satisfy every podspec in the
   # host app's graph at once, and two exact pins on the same pod deadlock
