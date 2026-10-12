@@ -2,11 +2,11 @@
 
 All notable changes to Digia Engage WebEngage (iOS) are documented in this file.
 
-## [Unreleased]
+## [2.0.1] - 2026-10-12
 
 ### Improvements
-- Swift Package Manager now depends on WebEngage's official `webengage-ios-sdk >= 2.0.0, < 3.0.0` package instead of embedding the 7.1.0 binary URL directly, allowing SwiftPM to resolve one shared vendor package.
-- CocoaPods now accepts `WebEngage >= 7.0.4, < 7.2.0` instead of requiring exactly 7.1.0, aligning the lower bound with SwiftPM's native SDK (7.0.4) and guarding against untested private-selector changes in future minor releases.
+- WebEngage is now resolved as a version range instead of an exact pin: Swift Package Manager depends on WebEngage's official `webengage-ios-sdk` package `>= 2.0.0, < 3.0.0`, and CocoaPods accepts `WebEngage >= 7.0.4, < 7.2.0`.
+
 
 ## [2.0.0] - 2026-10-10
 
