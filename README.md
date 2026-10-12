@@ -8,7 +8,7 @@ DigiaEngageWebEngage is an iOS CEP plugin that integrates the WebEngage SDK with
 
 **Quick facts**
 - **Package name:** DigiaEngageWebEngage
-- **WebEngage version:** 7.1.0, pinned exactly (SPM binary target and CocoaPods)
+- **WebEngage versions:** Swift package `>= 2.0.0, < 3.0.0`; CocoaPods SDK `>= 7.0.4, < 7.2.0`
 - **Swift tools version:** 6.0 (see `Package.swift`)
 - **Minimum platform:** iOS 15.0
 
@@ -16,6 +16,13 @@ DigiaEngageWebEngage is an iOS CEP plugin that integrates the WebEngage SDK with
 
 - iOS: 15.0+
 - Swift tools: 6.0
+- DigiaEngage: `>= 4.0.0, < 5.0.0`
+- WebEngage Swift package: `>= 2.0.0, < 3.0.0`
+- WebEngage CocoaPods SDK: `>= 7.0.4, < 7.2.0`
+
+WebEngage versions its Swift package independently from the native SDK inside
+it. Its package tags `2.0.0` through `2.0.4` contain native SDK `7.0.0` through
+`7.0.4`; CocoaPods uses the native SDK's own `7.x` version numbers.
 
 ## Installation
 
@@ -45,7 +52,14 @@ Then add the library to your app target:
 
 This package depends on the core Digia Engage SDK (`DigiaEngage`) which is declared as an SPM dependency in the package; you do not need to add the core SDK separately when using this package.
 
-**Important:** With SPM, this package brings in WebEngage 7.1.0 as a binary target. Do not add another copy of WebEngage to your host app (via CocoaPods or another SPM package) as that will cause duplicate-symbol linker errors. With CocoaPods, the podspec depends on the `WebEngage` pod at 7.1.0.
+**Important:** With SPM, this package brings in the official
+`webengage-ios-sdk` package transitively; do not add a second WebEngage binary
+through CocoaPods. With CocoaPods, the podspec resolves one shared
+`WebEngage >= 7.0.4, < 7.2.0` dependency with the host app.
+
+In a React Native app that also installs `react-native-webengage`, set
+`WEBENGAGE_DISABLE_SPM=true` before `pod install`. This keeps both integrations
+on the single CocoaPods copy of WebEngage.
 
 ## Usage
 
