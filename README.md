@@ -57,10 +57,6 @@ This package depends on the core Digia Engage SDK (`DigiaEngage`) which is decla
 through CocoaPods. With CocoaPods, the podspec resolves one shared
 `WebEngage >= 7.0.4, < 7.2.0` dependency with the host app.
 
-In a React Native app that also installs `react-native-webengage`, set
-`WEBENGAGE_DISABLE_SPM=true` before `pod install`. This keeps both integrations
-on the single CocoaPods copy of WebEngage.
-
 ## Usage
 
 Pass the plugin's delegate to WebEngage when you initialize WebEngage in your `AppDelegate`.
