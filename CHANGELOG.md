@@ -2,6 +2,11 @@
 
 All notable changes to Digia Engage WebEngage (iOS) are documented in this file.
 
+## [Unreleased]
+
+### Bug Fixes
+- A campaign WebEngage prepares before `Digia.register` is now held, for up to five minutes and at most 20 campaigns, and delivered once the plugin is registered and Digia is ready, as on Android; it was previously dropped. A campaign that is still held when the hold ends is dropped and WebEngage can offer it again.
+
 ## [2.0.1] - 2026-10-12
 
 ### Improvements
