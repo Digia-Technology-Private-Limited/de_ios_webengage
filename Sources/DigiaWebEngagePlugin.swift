@@ -123,6 +123,8 @@ public final class DigiaWebEngagePlugin: DigiaCEPPlugin {
             }
         }
         callbacksRegistered = true
+        // In-apps WebEngage prepared before this registration: held here until Digia is ready.
+        bridge.takeHeldInApps().forEach(deliver)
         if host.isReady { onHostReady() }
     }
 

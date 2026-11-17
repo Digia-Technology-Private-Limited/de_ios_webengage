@@ -1,18 +1,18 @@
+@testable import DigiaEngage
 @testable import DigiaEngageWebEngage
 import Foundation
 import Testing
 
-/// The pre-attach drop.
+/// The bridge's own state: the pre-register hold, the per-experiment gate, and
+/// private-selector safety.
 ///
 /// This delegate is installed in `AppDelegate`, strictly earlier than any plugin
-/// can attach, so WebEngage can prepare a campaign while `Digia.initialize()` is
-/// still in flight. That campaign is suppressed — WebEngage renders nothing —
-/// then dropped at once as not_ready, with its gate and cache freed so nothing
-/// is silenced for the session. No wait, no grey modal, no close reported.
+/// can register, so WebEngage can prepare a campaign before `Digia.register`.
+/// That campaign is suppressed — WebEngage renders nothing — and held, gate kept,
+/// until the plugin registers and Digia is ready, as on Android.
 ///
-/// Only the drop is exercised here — every method involved is pure plugin
-/// state, so no WebEngage instance is needed.
-@Suite("WebEngageSdkBridge — pre-attach drop", .serialized)
+/// Every method involved is pure plugin state, so no WebEngage instance is needed.
+@Suite("WebEngageSdkBridge", .serialized)
 struct WebEngageSdkBridgeTests {
 
     private func makeBridge() -> WebEngageSdkBridge {
@@ -36,24 +36,29 @@ struct WebEngageSdkBridgeTests {
         return stop.boolValue
     }
 
-    @Test("a payload prepared before attach is suppressed and dropped at once")
-    func dropsBeforeAttach() {
+    @MainActor
+    @Test("a payload prepared before register is held, then delivered once registered and ready")
+    func holdsBeforeRegister() {
+        // WebEngage calls back on the main thread; the hold relies on it.
         let bridge = makeBridge()
         let suppressed = prepare(bridge, experimentId: "exp_early")
+        #expect(suppressed, "WebEngage must not render under a Digia claim, even with no plugin registered")
 
-        #expect(suppressed, "WebEngage must not render under a Digia claim, even with no plugin attached")
-
-        var received: [String] = []
-        bridge.registerInAppListener(
-            onPayload: { received.append($0["experimentId"] as? String ?? "") },
-            onInvalidate: { _ in }
+        let config = WebEngagePluginConfig(diagnosticsEnabled: false)
+        let plugin = DigiaWebEngagePlugin(
+            bridge: bridge,
+            mapper: WebEngagePayloadMapper(config: config),
+            config: config,
+            cache: InAppDataCache()
         )
+        let host = FakeCEPHost()
+        host.isReady = false
+        plugin.attach(host: host)
+        #expect(host.delivered.isEmpty, "Digia is not ready yet: still held")
 
-        #expect(received.isEmpty, "no wait, no flush — the pre-attach payload is gone")
-
-        // The drop freed the gate, so the campaign can come back.
-        prepare(bridge, experimentId: "exp_early")
-        #expect(received == ["exp_early"])
+        host.isReady = true
+        plugin.onHostReady()
+        #expect(host.delivered.map(\.cepCampaignId) == ["exp_early"])
     }
 
     @Test("unregister then register again keeps interception working")
@@ -76,26 +81,6 @@ struct WebEngageSdkBridgeTests {
 
         #expect(first.isEmpty)
         #expect(second == ["exp_1"])
-    }
-
-    @Test("every pre-attach drop frees its gate, so nothing is silenced for the session")
-    func preAttachDropsFreeGates() {
-        let bridge = makeBridge()
-        for index in 1...6 {
-            let suppressed = prepare(bridge, experimentId: "exp_\(index)")
-            #expect(suppressed)
-        }
-
-        var received: [String] = []
-        bridge.registerInAppListener(
-            onPayload: { received.append($0["experimentId"] as? String ?? "") },
-            onInvalidate: { _ in }
-        )
-
-        #expect(received.isEmpty, "nothing was buffered, so nothing flushes")
-
-        prepare(bridge, experimentId: "exp_1")
-        #expect(received == ["exp_1"], "the drop freed the gate: the same experiment can come back")
     }
 
     @Test("a duplicate preparation for a live experiment is blocked")

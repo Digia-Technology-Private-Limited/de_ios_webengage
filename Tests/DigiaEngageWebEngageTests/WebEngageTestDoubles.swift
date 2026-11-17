@@ -66,6 +66,8 @@ final class FakeWebEngageBridge: WebEngageBridgeProtocol, @unchecked Sendable {
         releaseGate(experimentId: experimentId)
     }
 
+    func takeHeldInApps() -> [CEPTriggerPayload] { [] }
+
     func unregisterInAppListener() {
         onPayload = nil
         onInvalidate = nil

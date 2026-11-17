@@ -37,6 +37,10 @@ internal protocol WebEngageBridgeProtocol: AnyObject {
     /// Called from the hold observer and drops with no presentation.
     func notifyDismissed(experimentId: String)
 
+    /// In-apps WebEngage prepared before any plugin registered, handed over once.
+    /// Each still holds its cache entry and gate; the caller now owns settling it.
+    func takeHeldInApps() -> [CEPTriggerPayload]
+
     func unregisterInAppListener()
     func unregisterInlineListener()
     func isAvailable() -> Bool
@@ -68,6 +72,12 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
     private var onPayloadCallback:      (([String: Any]) -> Void)?
     private var onInvalidateCallback:   ((String) -> Void)?
     private var onInlineCampaignCallback: ((String, String, [String: Any], [String: Any]) -> Void)?
+
+    // In-apps prepared before the first plugin registered, held as Android holds them.
+    // Main thread only. After a plugin has registered once, a missing listener means
+    // detached, and those in-apps drop as before.
+    private var heldBeforeRegister: PendingPayloadBuffer?
+    private var registeredOnce = false
 
     // Screen hold (WE-14). Main thread only.
     private var pendingScreens: [String] = []
@@ -109,10 +119,16 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
     ) {
         onPayloadCallback    = onPayload
         onInvalidateCallback = onInvalidate
+        registeredOnce       = true
         // NOTE: The delegate binding happens at WebEngage init time in AppDelegate via
         // DigiaWebEngagePlugin.notificationDelegate. Nothing to do here at runtime.
-        // Pre-attach payloads are not buffered. They drop at once as not_ready
-        // with the gate freed, per de_workspace#42.
+        // In-apps prepared before this point wait in `heldBeforeRegister` until the
+        // plugin takes them with `takeHeldInApps()`.
+    }
+
+    func takeHeldInApps() -> [CEPTriggerPayload] {
+        guard Thread.isMainThread, let held = heldBeforeRegister else { return [] }
+        return MainActor.assumeIsolated { held.takeAll() }
     }
 
     func registerInlineListener(
@@ -363,12 +379,18 @@ extension WebEngageSdkBridge: WEGInAppNotificationProtocol {
             activeExperimentIds.insert(experimentId)
         }
 
-        // ── Step 7: Forward to plugin, or drop at once ─────────────────────────
+        // ── Step 7: Forward to plugin, hold until one registers, or drop ───────
         // Suppression already applied above, so WebEngage renders nothing.
-        // With no plugin attached there is no presentation to settle, so free
-        // the gate and the cache here. Never report notification_close.
+        // Before the first plugin registers, hold the in-app with its gate and
+        // cache kept; expiry frees both. After a detach there is no presentation
+        // to settle, so free the gate and the cache here. Never report
+        // notification_close.
+        let mapper = WebEngagePayloadMapper(config: config)
         if let onPayloadCallback {
             onPayloadCallback(payload)
+        } else if !registeredOnce, Thread.isMainThread,
+                  let trigger = mapper.map(payload) ?? mapper.mapBadValue(payload) {
+            MainActor.assumeIsolated { holdBeforeRegister(trigger) }
         } else {
             let campaignKey = WebEngagePayloadMapper.resolveConfig(payload)?.campaignKey
             log.w(
@@ -384,6 +406,29 @@ extension WebEngageSdkBridge: WEGInAppNotificationProtocol {
             }
         }
         return inAppNotificationData
+    }
+
+    /// Holds an in-app until a plugin registers. Same buffer, limits and drop
+    /// reasons as the plugin's own: 20 entries, 5 minutes.
+    @MainActor
+    private func holdBeforeRegister(_ trigger: CEPTriggerPayload) {
+        let held = heldBeforeRegister ?? PendingPayloadBuffer(onDrop: { [weak self] in self?.onHeldDropped($0, $1) })
+        heldBeforeRegister = held
+        log.i("Held until Digia is registered (experimentId=\(Self.experimentId(of: trigger)))", campaign: trigger.campaignKey)
+        held.add(trigger)
+    }
+
+    /// Expired or superseded before any plugin registered: free its cache entry and gate.
+    private func onHeldDropped(_ trigger: CEPTriggerPayload, _ reason: DropReason) {
+        let experimentId = Self.experimentId(of: trigger)
+        log.w("Dropped while held (experimentId=\(experimentId))", campaign: trigger.campaignKey, stage: .trigger, reason: reason, extras: ["cep": "webengage"])
+        guard !experimentId.isEmpty else { return }
+        dataCache.remove(experimentId: experimentId)
+        releaseGate(experimentId: experimentId)
+    }
+
+    private static func experimentId(of trigger: CEPTriggerPayload) -> String {
+        trigger.cepMetadata["experimentId"] ?? trigger.cepCampaignId
     }
 
     @objc func notificationShown(_ inAppNotificationData: [String: Any]!) {
